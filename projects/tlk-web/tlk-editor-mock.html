@@ -1,0 +1,3614 @@
+﻿<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TLK Forge - Workflow</title>
+  <link href="https://unpkg.com/tabulator-tables@6.4.0/dist/css/tabulator.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #eef4ed;
+      --surface: #ffffff;
+      --surface-alt: #f5f8fa;
+      --ink: #0b2545;
+      --muted: #425a78;
+      --line: #c7d4e2;
+      --line-strong: #b2c3d6;
+      --accent: #134074;
+      --accent-2: #13315c;
+      --warn: #9f6b1f;
+      --ok: #2f7a5a;
+      --shadow: 0 14px 34px rgba(22, 30, 44, .08);
+      --rad: 16px;
+      --font-ui: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+      --font-copy: "IBM Plex Sans", "Manrope", "Segoe UI", sans-serif;
+      --font-code: "JetBrains Mono", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--font-copy);
+      background:
+        radial-gradient(980px 460px at -18% -12%, #d6e0eb 0%, transparent 62%),
+        radial-gradient(980px 480px at 118% 8%, #dce6f1 0%, transparent 58%),
+        var(--bg);
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .rail {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 18px 10px;
+      background: rgba(255, 255, 255, .88);
+      backdrop-filter: blur(8px);
+      display: grid;
+      gap: 10px;
+    }
+
+    .steps {
+      list-style: none;
+      margin: 0;
+      padding: 2px 0 4px;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: #fff;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: 26px 1fr;
+      gap: 10px;
+      align-items: center;
+      min-width: 210px;
+      flex: 0 0 210px;
+    }
+
+    .step i {
+      font-style: normal;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font: 700 .76rem var(--font-ui);
+      color: #173a64;
+      background: #dce6f1;
+    }
+
+    .step b {
+      display: block;
+      font: 700 .87rem var(--font-ui);
+      margin-bottom: 2px;
+    }
+
+    .step small { color: var(--muted); font-size: .74rem; }
+    .step.active { border-color: #8ba5c2; background: #edf3f9; }
+    .step.active i { background: #cfddeb; color: #0f325d; }
+
+    .main {
+      padding: 20px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .scope-switch {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, #eff4f8 0%, #e6edf5 100%);
+    }
+
+    .scope-label {
+      margin: 0;
+      color: #1f426a;
+      font: 700 .72rem var(--font-ui);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .scope-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .scope-actions button {
+      padding: 8px 12px;
+      font-size: .78rem;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .scope-actions button.active {
+      border-color: #1a4b81;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+    }
+
+    .scope-switch .mode-tabs {
+      margin: 0;
+      padding: 4px;
+      gap: 4px;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: #dce7f2;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7);
+    }
+
+    .scope-switch .mode-tabs button {
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 9px;
+      padding: 8px 14px;
+      font-size: .82rem;
+      min-width: 150px;
+      font-weight: 700;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .scope-switch .mode-tabs button:hover {
+      transform: none;
+      box-shadow: none;
+      background: #f0f5fb;
+    }
+
+    .scope-switch .mode-tabs button.active {
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 1px 1px rgba(15, 23, 34, .05);
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font: 600 .84rem var(--font-ui);
+      cursor: pointer;
+      transition: transform .14s ease, box-shadow .14s ease;
+    }
+
+    button:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+      transform: none;
+      box-shadow: none;
+    }
+    button.primary {
+      border-color: #134074;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    }
+
+    .tool-health {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      font: 700 .72rem var(--font-ui);
+      background: #e5edf6;
+      color: #20446c;
+    }
+
+    .tool-health.ok {
+      border-color: #b9d7c8;
+      background: #eef8f3;
+      color: #2b6a4f;
+    }
+
+    .tool-health.down {
+      border-color: #e3c1c1;
+      background: #fdf4f4;
+      color: #a23a3a;
+    }
+
+    .tool-health.checking {
+      border-color: #e3d3b0;
+      background: #faf6ee;
+      color: #7d6330;
+    }
+
+    .kpis {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      padding: 8px 10px;
+      box-shadow: var(--shadow);
+      animation: rise .45s ease-out both;
+      min-height: 66px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .kpi:nth-child(2) { animation-delay: .04s; }
+    .kpi:nth-child(3) { animation-delay: .08s; }
+
+    .kpi b {
+      display: block;
+      font: 700 .98rem var(--font-ui);
+      line-height: 1.15;
+      margin-bottom: 2px;
+    }
+
+    .kpi small {
+      color: var(--muted);
+      font-size: .72rem;
+      line-height: 1.2;
+    }
+
+    .screen {
+      display: none;
+      border: 1px solid var(--line);
+      border-radius: var(--rad);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 14px;
+      animation: rise .35s ease-out;
+    }
+
+    .screen.active { display: grid; gap: 12px; }
+
+    .screen h2 {
+      margin: 0;
+      font: 700 1.04rem var(--font-ui);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: var(--surface-alt);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font: 700 .9rem var(--font-ui);
+    }
+
+    .mode-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .mode-tabs button.active {
+      border-color: #8ba5c2;
+      background: #e8f0f9;
+      color: #123a66;
+    }
+
+    .mode-panel {
+      display: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+      margin-bottom: 10px;
+    }
+
+    .mode-panel.active { display: block; }
+
+    .tlk-pack-actions {
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+
+    .tlk-pack-cell input,
+    .tlk-pack-cell select {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: .76rem;
+    }
+
+    .tlk-pack-cell input.invalid,
+    .tlk-pack-cell select.invalid {
+      border-color: #d07070;
+      background: #fff5f5;
+    }
+
+    .tlk-pack-cell.invalid-cell::after {
+      content: attr(data-error);
+      display: block;
+      margin-top: 4px;
+      color: #9e2b2b;
+      font: 600 .66rem var(--font-ui);
+      line-height: 1.25;
+      white-space: normal;
+    }
+
+    .validation-feedback {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font: 600 .74rem var(--font-ui);
+      display: none;
+    }
+
+    .validation-feedback.active { display: block; }
+
+    .validation-feedback.error {
+      border-color: #e5bcbc;
+      background: #fff5f5;
+      color: #8f2929;
+    }
+
+    .validation-feedback.warn {
+      border-color: #ead8ac;
+      background: #fff9ed;
+      color: #7f5a1d;
+    }
+
+    .validation-feedback.success {
+      border-color: #b8dcc8;
+      background: #f1fbf5;
+      color: #1d6b44;
+    }
+
+    .tlk-pack-remove {
+      padding: 6px 10px;
+      font-size: .75rem;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .field label {
+      font-size: .72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      font-family: var(--font-ui);
+    }
+
+    .file-field input[type="file"] {
+      padding: 7px;
+      line-height: 1.3;
+    }
+
+    input, select {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .mono {
+      font-family: var(--font-code);
+      font-size: .78rem;
+      color: #344154;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .79rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      padding: 8px 9px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f4f7;
+      color: #49566a;
+      font: 700 .75rem var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+
+    .locale-config {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-alt);
+      padding: 10px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .locale-config h4 {
+      margin: 0;
+      font: 700 .8rem var(--font-ui);
+    }
+
+    .locale-config p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .75rem;
+      line-height: 1.35;
+    }
+
+    .locale-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .locale-box {
+      border: 1px dashed var(--line-strong);
+      border-radius: 9px;
+      background: #fff;
+      padding: 8px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .locale-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      align-items: start;
+    }
+
+    .locale-row select {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .locale-row button {
+      justify-self: start;
+    }
+
+    .locale-chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 28px;
+    }
+
+    .locale-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: #f0f5fb;
+      color: #123a66;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font: 700 .7rem var(--font-ui);
+      line-height: 1;
+    }
+
+    .locale-chip small {
+      font: 600 .64rem var(--font-ui);
+      color: #38597e;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+
+    .locale-chip button {
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: .67rem;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .locale-chip button:hover {
+      background: rgba(12, 35, 63, .12);
+      box-shadow: none;
+      transform: none;
+    }
+
+    .locale-chip-list.empty::before {
+      content: attr(data-empty);
+      color: var(--muted);
+      font-size: .72rem;
+      font-family: var(--font-ui);
+    }
+
+    .grid-toolbar {
+      margin-top: 10px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 10px;
+      background: #f8f9fb;
+      padding: 9px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .grid-toolbar .group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .grid-toolbar .group.meta {
+      color: var(--muted);
+      font-size: .74rem;
+      font-family: var(--font-ui);
+    }
+
+    .grid-toolbar button {
+      padding: 6px 10px;
+      font-size: .76rem;
+    }
+
+    .grid-toolbar .page-jump {
+      width: 74px;
+      min-width: 74px;
+      text-align: center;
+      padding: 6px 8px;
+      font-size: .76rem;
+    }
+
+    .tabulator-host {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+      min-height: 560px;
+    }
+
+    .tabulator-host .tabulator {
+      border: none;
+      font-size: .79rem;
+    }
+
+    .tabulator-host .tabulator-header {
+      border-bottom: 1px solid var(--line);
+      background: #e9f0f8;
+    }
+
+    .tabulator-host .tabulator-col {
+      background: #e9f0f8;
+      border-right: 1px solid #c9d8e8;
+      font: 700 .74rem var(--font-ui);
+      color: #23466d;
+    }
+
+    .tabulator-host .tabulator-cell {
+      border-right: 1px solid #dde7f1;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    .status-ok { color: var(--ok); font-weight: 700; }
+    .status-warn { color: var(--warn); font-weight: 700; }
+    .status-error { color: #a23a3a; font-weight: 700; }
+    .status-pending { color: #6a7382; font-weight: 700; }
+
+    .timeline {
+      border: 1px dashed var(--line-strong);
+      border-radius: 12px;
+      background: #f7f9fb;
+      padding: 10px;
+      color: #46566f;
+      font-size: .85rem;
+    }
+
+    .timeline b { font-family: var(--font-ui); }
+
+    .bar {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: #e3e7ee;
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transform-origin: left;
+      animation: grow .8s ease-out;
+    }
+
+    .diff-report {
+      display: none;
+      gap: 10px;
+    }
+
+    .diff-report.active {
+      display: grid;
+      animation: rise .3s ease-out;
+    }
+
+    .diff-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .diff-head h3 {
+      margin: 0;
+    }
+
+    .diff-stamp {
+      font-size: .74rem;
+      color: var(--muted);
+      font-family: var(--font-ui);
+    }
+
+    .diff-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .diff-kpi {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 7px 8px;
+    }
+
+    .diff-kpi b {
+      display: block;
+      font: 700 .9rem var(--font-ui);
+      margin-bottom: 2px;
+    }
+
+    .diff-kpi small {
+      color: var(--muted);
+      font-size: .72rem;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 28, 42, .44);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 1200;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+      animation: rise .18s ease-out;
+    }
+
+    .modal-card {
+      width: min(560px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 24px 48px rgba(18, 28, 44, .18);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .modal-card h3 {
+      margin: 0;
+      font: 700 1rem var(--font-ui);
+    }
+
+    .modal-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .87rem;
+      line-height: 1.35;
+    }
+
+    .modal-link {
+      text-decoration: none;
+      color: #28435c;
+      overflow-wrap: anywhere;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    body.dark {
+      --bg: #0b1320;
+      --surface: #111b2d;
+      --surface-alt: #16243a;
+      --ink: #e5edf7;
+      --muted: #9eb0c7;
+      --line: #2d3f59;
+      --line-strong: #3a4e6d;
+      --accent: #2f6aa2;
+      --accent-2: #23507d;
+      --warn: #d4a561;
+      --ok: #78c39e;
+      --shadow: 0 16px 40px rgba(0, 0, 0, .36);
+      background:
+        radial-gradient(980px 460px at -18% -12%, #102033 0%, transparent 62%),
+        radial-gradient(980px 480px at 118% 8%, #0f2338 0%, transparent 58%),
+        var(--bg);
+    }
+
+    body.dark .rail {
+      background: rgba(13, 23, 37, .94);
+    }
+
+    body.dark .scope-switch {
+      background: linear-gradient(145deg, #17273d 0%, #1b2d45 100%);
+    }
+
+    body.dark .scope-label {
+      color: #bcd0e9;
+    }
+
+    body.dark .scope-switch .mode-tabs {
+      background: #223650;
+    }
+
+    body.dark .scope-switch .mode-tabs button:hover {
+      background: #2a4261;
+    }
+
+    body.dark .scope-switch .mode-tabs button.active,
+    body.dark .mode-tabs button.active {
+      border-color: #4c6587;
+      background: #2c4464;
+      color: #e6eef8;
+    }
+
+    body.dark .step {
+      background: #18283e;
+      border-color: #355073;
+    }
+
+    body.dark .step i {
+      color: #c9dbf1;
+      background: #284160;
+    }
+
+    body.dark .step.active {
+      border-color: #5c7da7;
+      background: #21344d;
+    }
+
+    body.dark .step.active i {
+      background: #365376;
+      color: #f0f6ff;
+    }
+
+    body.dark button {
+      background: #1a2b42;
+      color: #e7f0fb;
+      border-color: #355276;
+    }
+
+    body.dark button:hover {
+      box-shadow: 0 12px 24px rgba(0, 0, 0, .35);
+    }
+
+    body.dark .tool-health {
+      background: #213653;
+      color: #b8cbe3;
+      border-color: #3c5880;
+    }
+
+    body.dark .screen,
+    body.dark .card,
+    body.dark .mode-panel,
+    body.dark .kpi,
+    body.dark .mono,
+    body.dark .timeline,
+    body.dark .tabulator-host,
+    body.dark .modal-card {
+      background: #15243a;
+    }
+
+    body.dark .screen,
+    body.dark .card,
+    body.dark .mode-panel,
+    body.dark .kpi,
+    body.dark .mono,
+    body.dark .timeline,
+    body.dark .tabulator-host,
+    body.dark .modal-card {
+      border-color: #2f4767;
+    }
+
+    body.dark .mono {
+      color: #d5e3f2;
+      background: #12253b;
+    }
+
+    body.dark .validation-feedback.error {
+      border-color: #6f3b42;
+      background: #3a1f24;
+      color: #f2c6ca;
+    }
+
+    body.dark .validation-feedback.warn {
+      border-color: #6b5a2f;
+      background: #3a2f17;
+      color: #f3dfa8;
+    }
+
+    body.dark .validation-feedback.success {
+      border-color: #2d6249;
+      background: #163626;
+      color: #bce9cf;
+    }
+
+    body.dark input,
+    body.dark select,
+    body.dark textarea {
+      background: #162943;
+      color: #e6effa;
+      border-color: #355276;
+    }
+
+    body.dark .table-wrap table {
+      background: #15243a;
+    }
+
+    body.dark .grid-toolbar {
+      background: #13243a;
+      border-color: #395777;
+    }
+
+    body.dark .grid-toolbar .group.meta {
+      color: #a8bbd3;
+    }
+
+    body.dark .locale-config {
+      background: #18283f;
+      border-color: #2f4767;
+    }
+
+    body.dark .locale-box {
+      background: #15243a;
+      border-color: #395777;
+    }
+
+    body.dark .locale-chip {
+      background: #294162;
+      border-color: #3f5f86;
+      color: #e3edf9;
+    }
+
+    body.dark .locale-chip small {
+      color: #c4d8f0;
+    }
+
+    body.dark .locale-chip button:hover {
+      background: rgba(219, 233, 250, .18);
+    }
+
+    body.dark thead th {
+      background: #1d3250;
+      color: #c7d9ef;
+    }
+
+    body.dark tbody td {
+      border-bottom-color: #2a405e;
+    }
+
+    body.dark .tabulator-host .tabulator-header,
+    body.dark .tabulator-host .tabulator-col {
+      background: #1d3250;
+      color: #c7d9ef;
+      border-right-color: #2d4464;
+    }
+
+    body.dark .tabulator-host .tabulator {
+      background: #112034;
+      color: #e3edf9;
+    }
+
+    body.dark .tabulator-host .tabulator-tableholder,
+    body.dark .tabulator-host .tabulator-tableholder .tabulator-table {
+      background: #112034;
+    }
+
+    body.dark .tabulator-host .tabulator-row {
+      background: #14243a;
+      border-bottom: 1px solid #2a405e;
+      color: #e3edf9;
+    }
+
+    body.dark .tabulator-host .tabulator-row:nth-child(even) {
+      background: #122136;
+    }
+
+    body.dark .tabulator-host .tabulator-row:hover {
+      background: #1b314d !important;
+    }
+
+    body.dark .tabulator-host .tabulator-row.tabulator-selected {
+      background: #284766;
+    }
+
+    body.dark .tabulator-host .tabulator-row .tabulator-cell {
+      background: transparent !important;
+      color: #e3edf9;
+    }
+
+    body.dark .tabulator-host .tabulator-footer {
+      background: #15243a;
+      border-top: 1px solid #2f4767;
+      color: #c8d9ef;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-footer-contents,
+    body.dark .tabulator-host .tabulator-footer .tabulator-pages {
+      background: #15243a;
+      color: #c8d9ef;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-calcs-holder,
+    body.dark .tabulator-host .tabulator-footer .tabulator-calcs {
+      background: #132137;
+      color: #c8d9ef;
+      border-top: 1px solid #2a405e;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-calcs .tabulator-cell {
+      background: #132137 !important;
+      color: #c8d9ef;
+      border-right-color: #233a59;
+      border-bottom-color: #2a405e;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-paginator {
+      color: #b8cbe3;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-page,
+    body.dark .tabulator-host .tabulator-footer button {
+      background: #1b2e47;
+      color: #e3edf9;
+      border: 1px solid #3d5a7f;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-page:hover,
+    body.dark .tabulator-host .tabulator-footer button:hover {
+      background: #264264;
+      color: #f2f7ff;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-page.active {
+      background: #2f6aa2;
+      border-color: #4e82b4;
+      color: #ffffff;
+    }
+
+    body.dark .tabulator-host .tabulator-footer .tabulator-page[disabled],
+    body.dark .tabulator-host .tabulator-footer button[disabled],
+    body.dark .tabulator-host .tabulator-footer .tabulator-page.tabulator-page-disabled {
+      background: #203147;
+      color: #7f97b5;
+      border-color: #334962;
+      opacity: 1;
+    }
+
+    body.dark .tabulator-host .tabulator-cell {
+      border-right-color: #233a59;
+      border-bottom-color: #2a405e;
+    }
+
+    body.dark .tabulator-host .tabulator-cell.tabulator-editing,
+    body.dark .tabulator-host .tabulator-cell.tabulator-editing input,
+    body.dark .tabulator-host .tabulator-cell.tabulator-editing textarea {
+      background: #1e3552 !important;
+      color: #ecf3ff !important;
+      border-color: #4f6f96 !important;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes grow {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
+
+    @media (max-width: 1180px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .scope-switch {
+        align-items: stretch;
+        flex-wrap: wrap;
+      }
+      .scope-label {
+        width: 100%;
+        font-size: .68rem;
+      }
+      .scope-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+      .step {
+        min-width: 170px;
+        flex-basis: 170px;
+      }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .diff-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <section class="scope-switch" aria-label="Workflow scope selector">
+        <p class="scope-label">Workflow Scope</p>
+        <div class="mode-tabs" role="tablist" aria-label="Workflow scope">
+          <button id="scopeExchange" class="active" data-scope="exchange">Import/Export Scope</button>
+          <button id="scopeRebuild" data-scope="rebuild">Rebuild Scope</button>
+        </div>
+        <div class="scope-actions">
+          <button id="themeToggle" type="button" aria-pressed="false">Dark mode</button>
+        </div>
+      </section>
+      <ol class="steps" id="steps">
+        <li class="step active" data-step="1"><i>1</i><div><b>Import TLK</b><small>Parse + schema map</small></div></li>
+        <li class="step" data-step="2"><i>2</i><div><b>Edit TLK</b><small>Manual entry fixes</small></div></li>
+        <li class="step" data-step="3"><i>3</i><div><b>Export XLSX</b><small>Create translation sheet</small></div></li>
+        <li class="step" data-step="4"><i>4</i><div><b>Publish</b><small>GitHub PR or Import XLSX</small></div></li>
+        <li class="step" data-step="5" style="display:none"><i>5</i><div><b>Import XLSX</b><small>Load approved file</small></div></li>
+        <li class="step" data-step="6" style="display:none"><i>6</i><div><b>Rebuild TLK</b><small>Generate TLK/TLKF</small></div></li>
+      </ol>
+    </aside>
+
+    <main class="main">
+      <section class="kpis" id="editKpisPanel">
+        <article class="kpi"><b id="kStage">Stage 1/6</b><small>Pipeline progress</small></article>
+        <article class="kpi"><b id="kCoverage">73%</b><small>Translation coverage</small></article>
+        <article class="kpi"><b id="kQa">412</b><small>QA warnings</small></article>
+        <article class="kpi"><b id="kBlocking">39</b><small>Blocking errors</small></article>
+        <article class="kpi"><b id="kParity">96.2%</b><small>Token parity</small></article>
+        <article class="kpi"><b id="kRowsIssues">1287</b><small>Rows with issues</small></article>
+      </section>
+
+      <section class="screen active" data-screen="1">
+        <h2>1) Import Source</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Input Hub (3 modes)</h3>
+            <div class="mode-tabs">
+              <button id="modeTlk" data-import-mode="tlk" class="active">From TLK File</button>
+              <button id="modeXlsx" data-import-mode="xlsx">From XLSX Model</button>
+              <button id="modeRepo" data-import-mode="repo">From Repository Branch</button>
+            </div>
+
+            <div id="panelTlk" class="mode-panel active">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Locale</th><th>dialog.tlk</th><th>dialogf.tlk</th><th>Action</th></tr></thead>
+                  <tbody id="tlkBundleBody"></tbody>
+                </table>
+              </div>
+              <div class="field file-field">
+                <label for="tlkFileInput">TLK files</label>
+                <input id="tlkFileInput" type="file" accept=".tlk" multiple>
+              </div>
+              <div class="mode-tabs tlk-pack-actions">
+                <button id="btnAddTlkBundle" type="button">Add Locale Pack</button>
+              </div>
+              <div class="mono" id="tlkBundleSummary">No locale packs configured.</div>
+              <div id="tlkValidationFeedback" class="validation-feedback" aria-live="polite"></div>
+            </div>
+
+            <div id="panelXlsx" class="mode-panel">
+              <div class="field file-field">
+                <label for="xlsxSourceInput">XLSX file</label>
+                <input id="xlsxSourceInput" type="file" accept=".xlsx,.xlsm,.xls">
+              </div>
+              <div class="mono" id="xlsxSourceInfo">Use this when restarting from reviewed spreadsheet.</div>
+            </div>
+
+            <div id="panelRepo" class="mode-panel">
+              <div class="form-grid">
+                <div class="field">
+                  <label>Repository</label>
+                  <input id="repoName" value="nwn-localization/tlk-community-sheet">
+                </div>
+                <div class="field">
+                  <label>Branch</label>
+                  <select id="repoBranch">
+                    <option>main</option>
+                    <option>contributors/pl-batch-042</option>
+                    <option>contributors/de-fixes-017</option>
+                  </select>
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                  <label>Sheet Path</label>
+                  <input id="repoPath" value="sheets/localization_sheet_v4.xlsx">
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnImport">Load Source</button>
+              <button id="btnAnalyze" class="primary">Parse & Validate</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Schema Preview</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Column</th><th>Type</th><th>Required</th></tr></thead>
+                <tbody>
+                  <tr><td>StrRef</td><td>int32</td><td class="status-ok">Yes</td></tr>
+                  <tr><td>Source EN</td><td>text</td><td class="status-ok">Yes</td></tr>
+                  <tr><td>Tokens</td><td>list</td><td class="status-ok">Yes</td></tr>
+                  <tr><td>PL/DE/ES/FR</td><td>text</td><td class="status-pending">Later</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="2">
+        <h2>2) Edit TLK Entries</h2>
+        <div>
+          <article class="card">
+            <h3>TLK Editing Grid</h3>
+            <div class="locale-config">
+              <h4>Locale Columns for Edit/XLS</h4>
+              <p>Default columns come from loaded TLK packs. Add extra locales only if needed for this XLS run.</p>
+              <div class="locale-grid">
+                <div class="locale-box">
+                  <h4>Default (from loaded TLK)</h4>
+                  <div id="loadedLocaleColumns" class="locale-chip-list empty" data-empty="No loaded locale columns yet."></div>
+                </div>
+                <div class="locale-box">
+                  <h4>Add optional locale to XLS</h4>
+                  <div class="locale-row">
+                    <select id="extraLocaleSelect" aria-label="Extra locale for XLS"></select>
+                    <button id="btnAddExtraLocale" type="button">Add Locale</button>
+                  </div>
+                  <div id="extraLocaleColumns" class="locale-chip-list empty" data-empty="No optional locales selected."></div>
+                </div>
+              </div>
+            </div>
+            <div class="grid-toolbar">
+              <div class="group">
+                <button id="btnAutoFill">Auto-fill Missing</button>
+                <button id="btnAutoTranslate" class="primary">Auto-translate Missing</button>
+                <button id="btnRunQa">Validate</button>
+                <button id="btnApplyEdits">Apply TLK Edits</button>
+                <button id="btnToExport" class="primary">Continue to XLSX Export</button>
+              </div>
+              <div class="group">
+                <button id="btnUndo">Undo</button>
+                <button id="btnRedo">Redo</button>
+                <button id="btnPageFirst">First</button>
+                <button id="btnPagePrev">Prev</button>
+                <select id="editPageSize" class="page-jump" title="Rows per page">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+                <button id="btnPageNext">Next</button>
+                <button id="btnPageLast">Last</button>
+              </div>
+              <div class="group meta">
+                <span id="toolHealth" class="tool-health checking">Checking</span>
+                <span id="changeCount" class="tool-health">0 Pending</span>
+                <span id="editPageMeta">Rows 1-25 of 12000</span>
+                <span id="editPageLabel">Page 1 / 480</span>
+              </div>
+            </div>
+            <div id="tlkGrid" class="tabulator-host"></div>
+            <div class="mono" id="editState" hidden>Waiting for manual TLK edits...</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="3">
+        <h2>3) Export to Excel (.xlsx)</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Export Settings</h3>
+            <div class="mono">sheet: localization_sheet_v4.xlsx\ninclude: StrRef, scope, source, token_mask, locale columns\nrow lock: StrRef immutable</div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnExport" class="primary">Generate XLSX</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Export Result</h3>
+            <div class="mono" id="xlsxState">Waiting for export...</div>
+            <div class="bar" style="margin-top:10px"><span id="exportBar" style="width:8%"></span></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="4">
+        <h2>4) Publish PR or Import XLSX</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Path A: GitHub PR</h3>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnDownloadLocalCopy">Download Local Copy</button>
+              <button id="btnPrOpen" class="primary">Open Pull Request (Push XLSX)</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Path B: Import Approved XLSX</h3>
+            <div class="field file-field">
+              <label for="approvedXlsxInput">Approved XLSX</label>
+              <input id="approvedXlsxInput" type="file" accept=".xlsx,.xlsm,.xls">
+            </div>
+            <div class="mono" id="approvedXlsxInfo">Select merged XLSX to close exchange scope.</div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnImportXlsxDirect" class="primary">Import XLSX (Close Scope)</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="5">
+        <h2>Rebuild Scope: 1) Load Approved XLSX</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Import</h3>
+            <div class="field file-field">
+              <label for="mergedXlsxInput">Merged XLSX</label>
+              <input id="mergedXlsxInput" type="file" accept=".xlsx,.xlsm,.xls">
+            </div>
+            <div class="mono" id="mergedXlsxInfo">Select merged XLSX for rebuild scope.</div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnImportXlsx" class="primary">Import Merged XLSX</button>
+              <button id="btnDiffReport">Generate Diff Report</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Validation Outcome</h3>
+            <div class="mono" id="importState">Waiting for import...</div>
+            <div class="bar" style="margin-top:10px"><span id="importBar" style="width:14%"></span></div>
+          </article>
+        </div>
+        <article id="diffReportPanel" class="card diff-report">
+          <div class="diff-head">
+            <h3>Diff Report Preview</h3>
+            <span class="diff-stamp" id="diffStamp">No diff generated yet.</span>
+          </div>
+          <div class="diff-kpis">
+            <div class="diff-kpi"><b id="diffChanged">0</b><small>Changed rows</small></div>
+            <div class="diff-kpi"><b id="diffAdded">0</b><small>Added rows</small></div>
+            <div class="diff-kpi"><b id="diffRemoved">0</b><small>Removed rows</small></div>
+            <div class="diff-kpi"><b id="diffConflicts">0</b><small>Token conflicts</small></div>
+          </div>
+          <div class="mono" id="diffSummary">Generate report to compare merged XLSX with current TLK baseline.</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>StrRef</th>
+                  <th>Locale</th>
+                  <th>Old value</th>
+                  <th>New value</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="diffTableBody">
+                <tr><td colspan="5" class="status-pending">No report yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="btnDiffJson">Export Diff JSON</button>
+            <button id="btnDiffMarkdown">Export Diff Markdown</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="screen" data-screen="6">
+        <h2>Rebuild Scope: 2) Rebuild TLK/TLKF</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Build Output</h3>
+            <div class="mono" id="buildState">Status: Waiting for approved XLSX import.</div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button id="btnRebuild" class="primary">Build TLK</button>
+              <button id="btnExportQaBundle">Export QA Bundle</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Artifacts</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>File</th><th>Status</th><th>Checksum</th></tr></thead>
+                <tbody id="artifactBody">
+                  <tr><td>dialog.tlk</td><td class="status-pending">Pending</td><td>-</td></tr>
+                  <tr><td>dialogf.tlk</td><td class="status-pending">Pending</td><td>-</td></tr>
+                  <tr><td>translation_report.json</td><td class="status-pending">Pending</td><td>-</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="prModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="prModalTitle">
+    <div class="modal-card">
+      <h3 id="prModalTitle">Pull Request Created</h3>
+      <p id="prModalMessage">Push completed successfully (HTTP 200).</p>
+      <a id="prModalLink" class="mono modal-link" href="#" target="_blank" rel="noopener noreferrer">-</a>
+      <div class="modal-actions">
+        <button id="btnCopyPrUrl" type="button">Copy URL</button>
+        <button id="btnOpenPrUrl" class="primary" type="button">Open PR</button>
+        <button id="btnClosePrModal" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/tabulator-tables@6.4.0/dist/js/tabulator.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script>
+    const state = {
+      scope: "exchange",
+      step: 1,
+      importMode: "tlk",
+      sourceLoaded: false,
+      sourceLabel: "",
+      tlkBundleSeq: 3,
+      tlkBundles: [
+        { id: 1, locale: "EN", dialog: "dialog_en.tlk", dialogf: "dialogf_en.tlk", dialogfAuto: false },
+        { id: 2, locale: "PL", dialog: "dialog_pl.tlk", dialogf: "dialogf_pl.tlk", dialogfAuto: false }
+      ],
+      extraXlsxLocales: [],
+      gridLocaleColumns: [],
+      sourceRows: [],
+      sourceMeta: null,
+      tlkFilesByName: {},
+      sourceXlsxFile: null,
+      approvedXlsxFile: null,
+      mergedXlsxFile: null,
+      lastGeneratedXlsx: "",
+      editPage: 1,
+      editPageSize: 25,
+      editTotalRows: 0,
+      editBaseStrRef: 0,
+      edited: false,
+      exported: false,
+      pushed: false,
+      prOpen: false,
+      exchangeClosed: false,
+      imported: false,
+      built: false,
+      building: false,
+      diffGenerated: false,
+      autoFilled: false,
+      autoTranslated: false,
+      qaRan: false,
+      backendHealthy: false,
+      backendChecking: false,
+      backendLastCheck: ""
+    };
+
+    const appSettings = Object.freeze({
+      backend: {
+        healthUrl: "http://localhost:8080/health",
+        intervalMs: 15000,
+        timeoutMs: 1800,
+        mockMode: false,
+        mockHealthy: false
+      }
+    });
+
+    const stepEls = document.querySelectorAll(".step");
+    const screenEls = document.querySelectorAll(".screen");
+    const kStage = document.getElementById("kStage");
+    const kCoverage = document.getElementById("kCoverage");
+    const kQa = document.getElementById("kQa");
+    const kBlocking = document.getElementById("kBlocking");
+    const kParity = document.getElementById("kParity");
+    const kRowsIssues = document.getElementById("kRowsIssues");
+    const editKpisPanel = document.getElementById("editKpisPanel");
+    const timeline = document.getElementById("timeline");
+    const editState = document.getElementById("editState");
+    const editPageMeta = document.getElementById("editPageMeta");
+    const editPageLabel = document.getElementById("editPageLabel");
+    const editPageSizeSelect = document.getElementById("editPageSize");
+    const tlkGridHost = document.getElementById("tlkGrid");
+    const scopeButtons = document.querySelectorAll("[data-scope]");
+    const diffPanel = document.getElementById("diffReportPanel");
+    const diffStamp = document.getElementById("diffStamp");
+    const diffSummary = document.getElementById("diffSummary");
+    const diffTableBody = document.getElementById("diffTableBody");
+    const diffChanged = document.getElementById("diffChanged");
+    const diffAdded = document.getElementById("diffAdded");
+    const diffRemoved = document.getElementById("diffRemoved");
+    const diffConflicts = document.getElementById("diffConflicts");
+    const toolHealth = document.getElementById("toolHealth");
+    const changeCount = document.getElementById("changeCount");
+    const btnUndo = document.getElementById("btnUndo");
+    const btnRedo = document.getElementById("btnRedo");
+    const tlkBundleBody = document.getElementById("tlkBundleBody");
+    const tlkBundleSummary = document.getElementById("tlkBundleSummary");
+    const tlkValidationFeedback = document.getElementById("tlkValidationFeedback");
+    const btnAddTlkBundle = document.getElementById("btnAddTlkBundle");
+    const btnDownloadLocalCopy = document.getElementById("btnDownloadLocalCopy");
+    const btnPrOpen = document.getElementById("btnPrOpen");
+    const prModal = document.getElementById("prModal");
+    const prModalMessage = document.getElementById("prModalMessage");
+    const prModalLink = document.getElementById("prModalLink");
+    const btnCopyPrUrl = document.getElementById("btnCopyPrUrl");
+    const btnOpenPrUrl = document.getElementById("btnOpenPrUrl");
+    const btnClosePrModal = document.getElementById("btnClosePrModal");
+    const btnRebuild = document.getElementById("btnRebuild");
+    const btnExportQaBundle = document.getElementById("btnExportQaBundle");
+    const buildStateEl = document.getElementById("buildState");
+    const artifactBody = document.getElementById("artifactBody");
+    const themeToggle = document.getElementById("themeToggle");
+    const loadedLocaleColumns = document.getElementById("loadedLocaleColumns");
+    const extraLocaleColumns = document.getElementById("extraLocaleColumns");
+    const extraLocaleSelect = document.getElementById("extraLocaleSelect");
+    const btnAddExtraLocale = document.getElementById("btnAddExtraLocale");
+    const tlkFileInput = document.getElementById("tlkFileInput");
+    const xlsxSourceInput = document.getElementById("xlsxSourceInput");
+    const xlsxSourceInfo = document.getElementById("xlsxSourceInfo");
+    const approvedXlsxInput = document.getElementById("approvedXlsxInput");
+    const approvedXlsxInfo = document.getElementById("approvedXlsxInfo");
+    const mergedXlsxInput = document.getElementById("mergedXlsxInput");
+    const mergedXlsxInfo = document.getElementById("mergedXlsxInfo");
+    let tlkTable = null;
+    const THEME_STORAGE_KEY = "tlk-forge-theme";
+
+    const backendActionIds = [
+      "btnAutoFill",
+      "btnAutoTranslate",
+      "btnRunQa"
+    ];
+    const backendActionButtons = backendActionIds
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+
+    const modeButtons = document.querySelectorAll("[data-import-mode]");
+    const modePanels = {
+      tlk: document.getElementById("panelTlk"),
+      xlsx: document.getElementById("panelXlsx"),
+      repo: document.getElementById("panelRepo")
+    };
+    const tlkLocaleOptions = ["EN", "PL", "DE", "FR", "ES", "IT", "PT-BR", "RU"];
+    const scopePlans = {
+      exchange: [
+        { title: "Import TLK", sub: "Parse + schema map", screen: 1 },
+        { title: "Edit TLK", sub: "Manual entry fixes", screen: 2 },
+        { title: "Export XLSX", sub: "Create translation sheet", screen: 3 },
+        { title: "Publish", sub: "GitHub PR or Import XLSX", screen: 4 }
+      ],
+      rebuild: [
+        { title: "Import XLSX", sub: "Load approved file", screen: 5 },
+        { title: "Rebuild TLK", sub: "Generate TLK/TLKF", screen: 6 }
+      ]
+    };
+
+    const TLK_HEADER_SIZE = 20;
+    const TLK_ENTRY_SIZE = 40;
+    const TLK_TEXT_PRESENT_FLAG = 0x0001;
+    const TLK_LOCALE_TO_LANGUAGE_ID = {
+      EN: 0,
+      FR: 1,
+      DE: 2,
+      IT: 3,
+      ES: 4,
+      "PT-BR": 4,
+      PL: 5
+    };
+    const TLK_LANGUAGE_TO_ENCODING = {
+      0: "windows-1252",
+      1: "windows-1252",
+      2: "windows-1252",
+      3: "windows-1252",
+      4: "windows-1252",
+      5: "windows-1250"
+    };
+
+    function hasXlsxRuntime() {
+      return typeof window.XLSX !== "undefined";
+    }
+
+    function readAscii(view, start, length) {
+      const chars = [];
+      for (let i = 0; i < length; i += 1) {
+        chars.push(String.fromCharCode(view.getUint8(start + i)));
+      }
+      return chars.join("");
+    }
+
+    function decodeBytesSmart(bytes, languageId) {
+      const encodings = [];
+      const preferred = TLK_LANGUAGE_TO_ENCODING[languageId];
+      if (preferred) encodings.push(preferred);
+      encodings.push("utf-8", "windows-1252");
+
+      let bestText = "";
+      let bestPenalty = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < encodings.length; i += 1) {
+        const encoding = encodings[i];
+        try {
+          const decoder = new TextDecoder(encoding, { fatal: false });
+          const text = decoder.decode(bytes);
+          const replacementCount = (text.match(/\uFFFD/g) || []).length;
+          const penalty = replacementCount * 1000 + Math.abs(text.length - bytes.length);
+          if (penalty < bestPenalty) {
+            bestPenalty = penalty;
+            bestText = text;
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+
+      return bestText;
+    }
+
+    function fileNameToken(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function safeFileNameFromPath(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      const normalized = raw.replace(/\\/g, "/");
+      const parts = normalized.split("/");
+      return parts[parts.length - 1] || "";
+    }
+
+    function sanitizeSheetCell(value) {
+      if (value == null) return "";
+      return String(value).replace(/\r\n/g, "\n");
+    }
+
+    function parseSingleTlkBuffer(arrayBuffer, fileName) {
+      const view = new DataView(arrayBuffer);
+      if (view.byteLength < TLK_HEADER_SIZE) {
+        throw new Error(`${fileName}: file is too small to be a TLK.`);
+      }
+
+      const signature = readAscii(view, 0, 4);
+      const version = readAscii(view, 4, 4);
+      if (signature !== "TLK " || version !== "V3.0") {
+        throw new Error(`${fileName}: invalid TLK signature/version (${signature} ${version}).`);
+      }
+
+      const languageId = view.getUint32(8, true);
+      const entryCount = view.getUint32(12, true);
+      const stringBlobOffset = view.getUint32(16, true);
+      const expectedDescriptorBytes = entryCount * TLK_ENTRY_SIZE;
+      const descriptorsEnd = TLK_HEADER_SIZE + expectedDescriptorBytes;
+      if (descriptorsEnd > view.byteLength || stringBlobOffset > view.byteLength) {
+        throw new Error(`${fileName}: malformed TLK layout.`);
+      }
+
+      const rows = new Array(entryCount);
+      for (let i = 0; i < entryCount; i += 1) {
+        const base = TLK_HEADER_SIZE + i * TLK_ENTRY_SIZE;
+        const flags = view.getUint32(base, true);
+        const stringOffset = view.getUint32(base + 28, true);
+        const stringLength = view.getUint32(base + 32, true);
+        const hasText = (flags & TLK_TEXT_PRESENT_FLAG) !== 0 && stringLength > 0;
+        let text = "";
+        if (hasText) {
+          const textStart = stringBlobOffset + stringOffset;
+          const textEnd = textStart + stringLength;
+          if (textStart >= 0 && textEnd <= view.byteLength && textStart <= textEnd) {
+            const bytes = new Uint8Array(arrayBuffer, textStart, stringLength);
+            text = decodeBytesSmart(bytes, languageId);
+          }
+        }
+        rows[i] = text;
+      }
+
+      return {
+        fileName,
+        languageId,
+        entryCount,
+        rows
+      };
+    }
+
+    function buildRowsFromParsedTlkBundles(parsedBundles) {
+      if (!Array.isArray(parsedBundles) || parsedBundles.length === 0) {
+        return [];
+      }
+      const entryCount = parsedBundles[0].parsed.entryCount;
+      const rows = new Array(entryCount);
+      const localeCols = getEffectiveLocaleColumns();
+      const englishColumn = localeCols.find(col => col.locale === "EN" && col.variant === "dialog");
+
+      for (let i = 0; i < entryCount; i += 1) {
+        const row = {
+          id: i,
+          strRef: i,
+          sourceEn: "",
+          context: ""
+        };
+
+        localeCols.forEach(col => {
+          row[col.field] = "";
+        });
+
+        parsedBundles.forEach(bundleData => {
+          const bundle = bundleData.bundle;
+          const parsed = bundleData.parsed;
+          const localeToken = localeCodeToFieldToken(bundle.locale);
+          const dialogField = `loc_${localeToken}`;
+          const dialogfField = `loc_${localeToken}_f`;
+          row[dialogField] = sanitizeSheetCell(parsed.rows[i] || "");
+          if (bundleData.dialogfParsed && !bundle.dialogfAuto) {
+            row[dialogfField] = sanitizeSheetCell(bundleData.dialogfParsed.rows[i] || "");
+          }
+        });
+
+        const sourceFromEN = englishColumn ? row[englishColumn.field] : "";
+        if (sourceFromEN) {
+          row.sourceEn = sourceFromEN;
+        } else {
+          const firstTextField = localeCols.find(col => String(row[col.field] || "").trim().length > 0);
+          row.sourceEn = firstTextField ? row[firstTextField.field] : "";
+        }
+        rows[i] = row;
+      }
+
+      return rows;
+    }
+
+    function localeColumnsFromXlsxColumns(columns) {
+      const localeColumns = [];
+      columns.forEach(colName => {
+        if (!/^loc_[a-z0-9_]+/.test(colName)) return;
+        const suffix = colName.slice(4);
+        const isDialogf = suffix.endsWith("_f");
+        const isExtra = suffix.endsWith("_xlsx");
+        const localeToken = isDialogf
+          ? suffix.slice(0, -2)
+          : isExtra
+            ? suffix.slice(0, -5)
+            : suffix;
+        const locale = localeToken.replace(/_/g, "-").toUpperCase();
+        localeColumns.push({
+          field: colName,
+          title: isDialogf ? `${locale} F` : isExtra ? `${locale} XLS` : locale,
+          locale,
+          variant: isDialogf ? "dialogf" : isExtra ? "xlsx-extra" : "dialog"
+        });
+      });
+      return localeColumns;
+    }
+
+    function applyRowsToGrid(rows, sourceLabel) {
+      state.sourceRows = Array.isArray(rows) ? rows : [];
+      state.editTotalRows = state.sourceRows.length;
+      state.editBaseStrRef = state.sourceRows.length > 0 ? Number(state.sourceRows[0].strRef || 0) : 0;
+      state.sourceLoaded = state.sourceRows.length > 0;
+      state.sourceLabel = sourceLabel || "";
+      if (state.sourceRows.length === 0) {
+        state.edited = false;
+      } else {
+        state.edited = false;
+        state.exported = false;
+        state.diffGenerated = false;
+        state.imported = false;
+        state.built = false;
+      }
+      refreshGridFromLocaleConfig();
+      updatePagingToolbar();
+      updateChangeTracking();
+      syncPublishControls();
+      syncBuildControls();
+    }
+
+    function buildXlsxRowsForExport() {
+      if (!tlkTable) return [];
+      const rows = tlkTable.getData();
+      return rows.map(row => {
+        const exported = {
+          StrRef: row.strRef,
+          Source_EN: row.sourceEn,
+          Context: row.context || ""
+        };
+        state.gridLocaleColumns.forEach(col => {
+          const columnName = col.variant === "dialogf"
+            ? `${col.locale}_F`
+            : col.variant === "xlsx-extra"
+              ? `${col.locale}_XLS`
+              : col.locale;
+          exported[columnName] = row[col.field] || "";
+        });
+        exported.Status = row.status || "Draft";
+        return exported;
+      });
+    }
+
+    function buildTlkRowsFromXlsxRows(sheetRows) {
+      const normalized = sheetRows
+        .map(row => row || {})
+        .filter(row => row.StrRef !== undefined && row.StrRef !== null && String(row.StrRef).trim() !== "")
+        .filter(row => Number.isFinite(Number(row.StrRef)));
+      normalized.sort((a, b) => Number(a.StrRef) - Number(b.StrRef));
+      return normalized.map(row => ({
+        id: Number(row.StrRef),
+        strRef: Number(row.StrRef),
+        sourceEn: sanitizeSheetCell(row.Source_EN || row.Source || ""),
+        context: sanitizeSheetCell(row.Context || ""),
+        status: sanitizeSheetCell(row.Status || "Draft"),
+        ...Object.keys(row).reduce((acc, key) => {
+          if (["StrRef", "Source_EN", "Source", "Context", "Status"].includes(key)) return acc;
+          const localeLabel = String(key).trim();
+          const lower = localeLabel.toLowerCase();
+          let field = "";
+          if (lower.endsWith("_f")) {
+            field = `loc_${localeCodeToFieldToken(localeLabel.slice(0, -2))}_f`;
+          } else if (lower.endsWith("_xls")) {
+            field = `loc_${localeCodeToFieldToken(localeLabel.slice(0, -4))}_xlsx`;
+          } else {
+            field = `loc_${localeCodeToFieldToken(localeLabel)}`;
+          }
+          acc[field] = sanitizeSheetCell(row[key]);
+          return acc;
+        }, {})
+      }));
+    }
+
+    function makeXlsxFileName() {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return `localization_sheet_v4_${timestamp}.xlsx`;
+    }
+
+    function makeTlkFileName(baseName, locale, isDialogf) {
+      const suffix = isDialogf ? "dialogf" : "dialog";
+      const token = localeCodeToFieldToken(locale).replace(/_/g, "-");
+      return `${baseName}_${suffix}_${token}.tlk`;
+    }
+
+    function encodeTlkText(text) {
+      return new TextEncoder().encode(String(text || ""));
+    }
+
+    function quickChecksumHex(bytes) {
+      let hash = 2166136261;
+      for (let i = 0; i < bytes.length; i += 1) {
+        hash ^= bytes[i];
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      return hash.toString(16).toUpperCase().padStart(8, "0");
+    }
+
+    function buildSingleTlkBinaryFromColumn(rows, columnField, languageId) {
+      const texts = rows.map(row => String(row[columnField] || ""));
+      const encodedRows = texts.map(encodeTlkText);
+      const descriptorBytes = rows.length * TLK_ENTRY_SIZE;
+      const stringBlobOffset = TLK_HEADER_SIZE + descriptorBytes;
+      const stringBlobSize = encodedRows.reduce((sum, bytes) => sum + bytes.length, 0);
+      const totalBytes = stringBlobOffset + stringBlobSize;
+      const buffer = new ArrayBuffer(totalBytes);
+      const view = new DataView(buffer);
+      const bytes = new Uint8Array(buffer);
+
+      bytes.set([0x54, 0x4c, 0x4b, 0x20], 0);
+      bytes.set([0x56, 0x33, 0x2e, 0x30], 4);
+      view.setUint32(8, Number(languageId) || 0, true);
+      view.setUint32(12, rows.length, true);
+      view.setUint32(16, stringBlobOffset, true);
+
+      let stringOffsetCursor = 0;
+      let writeCursor = stringBlobOffset;
+
+      for (let i = 0; i < rows.length; i += 1) {
+        const descBase = TLK_HEADER_SIZE + i * TLK_ENTRY_SIZE;
+        const valueBytes = encodedRows[i];
+        const hasText = valueBytes.length > 0;
+        view.setUint32(descBase, hasText ? TLK_TEXT_PRESENT_FLAG : 0, true);
+        view.setUint32(descBase + 20, 0, true);
+        view.setUint32(descBase + 24, 0, true);
+        view.setUint32(descBase + 28, stringOffsetCursor, true);
+        view.setUint32(descBase + 32, valueBytes.length, true);
+        view.setFloat32(descBase + 36, 0, true);
+        if (hasText) {
+          bytes.set(valueBytes, writeCursor);
+          writeCursor += valueBytes.length;
+          stringOffsetCursor += valueBytes.length;
+        }
+      }
+
+      return new Uint8Array(buffer);
+    }
+
+    async function saveBytesToDisk(bytes, fileName, mimeType) {
+      const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+      if (window.showSaveFilePicker) {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: fileName
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return { method: "save-picker", fileName };
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      return { method: "download", fileName };
+    }
+
+    function stamp(text) {
+      const t = new Date().toLocaleTimeString("pl-PL");
+      if (timeline) timeline.innerHTML = `<b>${t}</b> - ${text}`;
+    }
+
+    function nowLabel() {
+      return new Date().toLocaleString("pl-PL");
+    }
+
+    function applyBackendGate() {
+      backendActionButtons.forEach(btn => {
+        btn.disabled = !state.backendHealthy || state.backendChecking;
+        btn.title = state.backendHealthy
+          ? ""
+          : "Automation tools unavailable: backend offline.";
+      });
+    }
+
+    function formatStatusBadge(value) {
+      if (value === "Validated") return "<span class='status-ok'>Validated</span>";
+      if (value === "MT Draft") return "<span class='status-warn'>MT Draft</span>";
+      if (value === "Needs QA") return "<span class='status-warn'>Needs QA</span>";
+      if (value === "Error") return "<span class='status-error'>Error</span>";
+      return "<span class='status-pending'>Draft</span>";
+    }
+
+    function getEditTotalPages() {
+      return Math.max(1, Math.ceil(state.editTotalRows / state.editPageSize));
+    }
+
+    function updatePagingToolbar() {
+      if (!tlkTable) return;
+      const currentPage = Number(tlkTable.getPage() || 1);
+      const maxPage = Number(tlkTable.getPageMax() || getEditTotalPages());
+      const hasRows = state.editTotalRows > 0;
+      const start = hasRows ? (currentPage - 1) * state.editPageSize + 1 : 0;
+      const end = hasRows ? Math.min(state.editTotalRows, start + state.editPageSize - 1) : 0;
+
+      state.editPage = currentPage;
+      editPageMeta.textContent = `Rows ${start}-${end} of ${state.editTotalRows}`;
+      editPageLabel.textContent = `Page ${currentPage} / ${maxPage}`;
+      editPageSizeSelect.value = String(state.editPageSize);
+
+      document.getElementById("btnPageFirst").disabled = currentPage <= 1;
+      document.getElementById("btnPagePrev").disabled = currentPage <= 1;
+      document.getElementById("btnPageNext").disabled = currentPage >= maxPage;
+      document.getElementById("btnPageLast").disabled = currentPage >= maxPage;
+    }
+
+    function updateChangeTracking() {
+      const undoCount = tlkTable ? Number(tlkTable.getHistoryUndoSize() || 0) : 0;
+      const redoCount = tlkTable ? Number(tlkTable.getHistoryRedoSize() || 0) : 0;
+      changeCount.textContent = `${undoCount} Pending`;
+      btnUndo.disabled = undoCount === 0;
+      btnRedo.disabled = redoCount === 0;
+    }
+
+    function buildMockSource(strRef) {
+      const samples = [
+        "You must gather your party before venturing forth.",
+        "Insufficient gold.",
+        "Journal updated.",
+        "You have gained experience.",
+        "Inventory full.",
+        "Quest completed.",
+        "You cannot rest here.",
+        "New area discovered.",
+        "Skill check failed.",
+        "Trap detected.",
+        "You have entered combat.",
+        "Autosave complete."
+      ];
+      return samples[(strRef - state.editBaseStrRef) % samples.length];
+    }
+
+    function buildMockContext(strRef) {
+      const contexts = [
+        "UI / Travel",
+        "Economy / Shop",
+        "Quest / Log",
+        "Combat / Reward",
+        "Items / Capacity",
+        "Quest / State",
+        "Rules / Rest",
+        "World / Discovery",
+        "Checks / Skill",
+        "Exploration / Trap",
+        "Combat / State",
+        "System / Save"
+      ];
+      return contexts[(strRef - state.editBaseStrRef) % contexts.length];
+    }
+
+    function normalizeLocaleCode(value) {
+      return String(value || "").toUpperCase().trim();
+    }
+
+    function localeCodeToFieldToken(localeCode) {
+      return String(localeCode || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function getLoadedLocaleColumnsFromState() {
+      if (state.sourceMeta && state.sourceMeta.kind === "xlsx" && Array.isArray(state.sourceRows) && state.sourceRows.length > 0) {
+        const firstRow = state.sourceRows[0];
+        return Object.keys(firstRow)
+          .filter(field => /^loc_[a-z0-9_]+/.test(field))
+          .map(field => {
+            const suffix = field.slice(4);
+            const isDialogf = suffix.endsWith("_f");
+            const isExtra = suffix.endsWith("_xlsx");
+            const localeToken = isDialogf ? suffix.slice(0, -2) : isExtra ? suffix.slice(0, -5) : suffix;
+            const locale = localeToken.replace(/_/g, "-").toUpperCase();
+            return {
+              field,
+              title: isDialogf ? `${locale} F` : isExtra ? `${locale} XLS` : locale,
+              locale,
+              variant: isDialogf ? "dialogf" : isExtra ? "xlsx-extra" : "dialog"
+            };
+          });
+      }
+
+      const columns = [];
+      const usedFields = new Set();
+      state.tlkBundles.forEach((bundle, index) => {
+        const locale = normalizeLocaleCode(bundle.locale);
+        if (!locale) return;
+        const token = localeCodeToFieldToken(locale) || `locale_${index + 1}`;
+        const dialogField = `loc_${token}`;
+        if (!usedFields.has(dialogField)) {
+          columns.push({ field: dialogField, title: locale, locale, variant: "dialog" });
+          usedFields.add(dialogField);
+        }
+        const hasDialogf = String(bundle.dialogf || "").trim().length > 0 && !bundle.dialogfAuto;
+        if (hasDialogf) {
+          const dialogfField = `loc_${token}_f`;
+          if (!usedFields.has(dialogfField)) {
+            columns.push({ field: dialogfField, title: `${locale} F`, locale, variant: "dialogf" });
+            usedFields.add(dialogfField);
+          }
+        }
+      });
+      return columns;
+    }
+
+    function normalizeExtraLocales() {
+      const loadedLocaleSet = new Set(getLoadedLocaleColumnsFromState().map(col => col.locale));
+      const seen = new Set();
+      state.extraXlsxLocales = state.extraXlsxLocales
+        .map(locale => normalizeLocaleCode(locale))
+        .filter(locale => {
+          if (!locale || loadedLocaleSet.has(locale) || seen.has(locale)) return false;
+          seen.add(locale);
+          return true;
+        });
+    }
+
+    function getEffectiveLocaleColumns() {
+      const loadedColumns = getLoadedLocaleColumnsFromState();
+      normalizeExtraLocales();
+      const extraColumns = state.extraXlsxLocales.map(locale => {
+        const token = localeCodeToFieldToken(locale);
+        return {
+          field: `loc_${token}_xlsx`,
+          title: `${locale} XLS`,
+          locale,
+          variant: "xlsx-extra"
+        };
+      });
+      return [...loadedColumns, ...extraColumns];
+    }
+
+    function getEditableLocaleFields() {
+      return state.gridLocaleColumns.map(col => col.field);
+    }
+
+    function buildLocaleCellValue(localeColumn, source, rowIndex) {
+      const baseMod = localeColumn.variant === "dialogf" ? 23 : localeColumn.variant === "xlsx-extra" ? 31 : 17;
+      const jitter = localeColumn.field.length % 7;
+      const isMissing = rowIndex % (baseMod + jitter) === 0;
+      if (isMissing) return "";
+      if (localeColumn.locale === "EN" && localeColumn.variant !== "xlsx-extra") {
+        return source;
+      }
+      const tag = localeColumn.variant === "dialogf" ? `${localeColumn.locale} F` : localeColumn.locale;
+      return `[${tag}] ${source}`;
+    }
+
+    function buildGridRows() {
+      if (Array.isArray(state.sourceRows) && state.sourceRows.length > 0) {
+        const previousRows = tlkTable ? tlkTable.getData() : [];
+        const previousMap = new Map(previousRows.map(row => [Number(row.id), row]));
+
+        return state.sourceRows.map((rawRow, index) => {
+          const strRefValue = Number(rawRow.strRef ?? rawRow.id ?? index);
+          const existing = previousMap.get(strRefValue) || {};
+          const row = {
+            id: strRefValue,
+            strRef: strRefValue,
+            sourceEn: sanitizeSheetCell(existing.sourceEn ?? rawRow.sourceEn ?? ""),
+            context: sanitizeSheetCell(existing.context ?? rawRow.context ?? ""),
+            status: sanitizeSheetCell(existing.status ?? rawRow.status ?? "Draft")
+          };
+
+          state.gridLocaleColumns.forEach(localeColumn => {
+            const currentValue = existing[localeColumn.field];
+            const baseValue = rawRow[localeColumn.field];
+            row[localeColumn.field] = sanitizeSheetCell(
+              typeof currentValue === "string" ? currentValue : baseValue || ""
+            );
+          });
+
+          return row;
+        });
+      }
+
+      const rows = [];
+      const previousRows = tlkTable ? tlkTable.getData() : [];
+      const previousMap = new Map(previousRows.map(row => [row.id, row]));
+
+      for (let i = 0; i < state.editTotalRows; i += 1) {
+        const strRef = state.editBaseStrRef + i;
+        const source = buildMockSource(strRef);
+        const existing = previousMap.get(strRef) || {};
+        const row = {
+          id: strRef,
+          strRef,
+          sourceEn: typeof existing.sourceEn === "string" ? existing.sourceEn : source,
+          context: typeof existing.context === "string" ? existing.context : buildMockContext(strRef)
+        };
+
+        state.gridLocaleColumns.forEach(localeColumn => {
+          const currentValue = existing[localeColumn.field];
+          row[localeColumn.field] = typeof currentValue === "string"
+            ? currentValue
+            : buildLocaleCellValue(localeColumn, source, i);
+        });
+
+        row.status = typeof existing.status === "string" ? existing.status : "Draft";
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function buildGridColumns() {
+      const localeColumns = state.gridLocaleColumns.map(localeColumn => ({
+        title: localeColumn.title,
+        field: localeColumn.field,
+        width: 220,
+        editor: "input",
+        headerSort: false
+      }));
+
+      return [
+        { title: "StrRef", field: "strRef", width: 96, hozAlign: "right", frozen: true, headerSort: false },
+        { title: "Source EN", field: "sourceEn", width: 360, frozen: true, editor: false, headerSort: false },
+        { title: "Context", field: "context", width: 170, editor: false, headerSort: false },
+        ...localeColumns,
+        { title: "Status", field: "status", width: 130, headerSort: false, formatter: cell => formatStatusBadge(cell.getValue()) }
+      ];
+    }
+
+    function renderLocaleColumnConfig() {
+      const loadedColumns = getLoadedLocaleColumnsFromState();
+      normalizeExtraLocales();
+
+      if (loadedLocaleColumns) {
+        loadedLocaleColumns.innerHTML = loadedColumns
+          .map(col => `<span class='locale-chip'>${escapeHtml(col.title)} <small>${escapeHtml(col.variant)}</small></span>`)
+          .join("");
+        loadedLocaleColumns.classList.toggle("empty", loadedColumns.length === 0);
+      }
+
+      if (extraLocaleColumns) {
+        extraLocaleColumns.innerHTML = state.extraXlsxLocales
+          .map(locale => `<span class='locale-chip'>${escapeHtml(locale)} <small>xlsx</small><button type='button' data-extra-locale='${escapeHtml(locale)}' aria-label='Remove ${escapeHtml(locale)}'>×</button></span>`)
+          .join("");
+        extraLocaleColumns.classList.toggle("empty", state.extraXlsxLocales.length === 0);
+      }
+
+      if (extraLocaleSelect && btnAddExtraLocale) {
+        const loadedLocaleSet = new Set(loadedColumns.map(col => col.locale));
+        const selectedExtraSet = new Set(state.extraXlsxLocales);
+        const available = tlkLocaleOptions.filter(locale => !loadedLocaleSet.has(locale) && !selectedExtraSet.has(locale));
+        extraLocaleSelect.innerHTML = available
+          .map(locale => `<option value='${escapeHtml(locale)}'>${escapeHtml(locale)}</option>`)
+          .join("");
+        extraLocaleSelect.disabled = available.length === 0;
+        btnAddExtraLocale.disabled = available.length === 0;
+      }
+    }
+
+    function refreshGridFromLocaleConfig() {
+      state.gridLocaleColumns = getEffectiveLocaleColumns();
+      renderLocaleColumnConfig();
+
+      if (!window.Tabulator) {
+        editState.textContent = "Tabulator failed to load from CDN. Grid features unavailable in this environment.";
+        return;
+      }
+
+      const rows = buildGridRows();
+      const columns = buildGridColumns();
+
+      if (!tlkTable) {
+        tlkTable = new Tabulator(tlkGridHost, {
+          data: rows,
+          index: "id",
+          layout: "fitDataStretch",
+          reactiveData: true,
+          history: true,
+          height: 540,
+          movableColumns: true,
+          pagination: "local",
+          paginationSize: state.editPageSize,
+          paginationCounter: false,
+          columns,
+          cellEdited: cell => {
+            const row = cell.getRow();
+            row.update({ status: "Needs QA" });
+            updateChangeTracking();
+          },
+          historyUndo: () => {
+            updateChangeTracking();
+          },
+          historyRedo: () => {
+            updateChangeTracking();
+          },
+          pageLoaded: () => {
+            updatePagingToolbar();
+          }
+        });
+      } else {
+        tlkTable.setColumns(columns);
+        tlkTable.setData(rows);
+        tlkTable.setPageSize(state.editPageSize);
+      }
+
+      updatePagingToolbar();
+      updateChangeTracking();
+    }
+
+    function initTabulatorGrid() {
+      refreshGridFromLocaleConfig();
+    }
+
+    function renderToolHealth() {
+      const mode = state.backendChecking ? "checking" : state.backendHealthy ? "ok" : "down";
+      toolHealth.className = `tool-health ${mode}`;
+      toolHealth.textContent = mode === "ok" ? "Backend Online" : mode === "checking" ? "Checking" : "Backend Offline";
+      const lastCheckSuffix = state.backendLastCheck ? ` Last check: ${state.backendLastCheck}.` : "";
+      toolHealth.title = mode === "ok"
+        ? `Automation tools ready.${lastCheckSuffix}`
+        : mode === "checking"
+          ? "Checking backend in background."
+          : "Automation tools disabled. Backend is offline or unreachable.";
+    }
+
+    function setBackendChecking() {
+      state.backendChecking = true;
+      state.backendHealthy = false;
+      applyBackendGate();
+      renderToolHealth();
+    }
+
+    function setBackendHealth(healthy) {
+      state.backendChecking = false;
+      state.backendHealthy = healthy;
+      state.backendLastCheck = nowLabel();
+      applyBackendGate();
+      renderToolHealth();
+    }
+
+    async function probeBackendHealth() {
+      const forced = window.__TLK_BACKEND_HEALTH__;
+      if (typeof forced === "boolean") {
+        return forced;
+      }
+      if (appSettings.backend.mockMode) {
+        return appSettings.backend.mockHealthy;
+      }
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), appSettings.backend.timeoutMs);
+      try {
+        const response = await fetch(appSettings.backend.healthUrl, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal
+        });
+        return response.ok;
+      } catch (error) {
+        return false;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }
+
+    async function refreshBackendHealth() {
+      setBackendChecking();
+      const healthy = await probeBackendHealth();
+      setBackendHealth(healthy);
+    }
+
+    function getCurrentPlan() {
+      return scopePlans[state.scope];
+    }
+
+    function getActiveStepCount() {
+      return getCurrentPlan().length;
+    }
+
+    function getActiveScreenNumber() {
+      const plan = getCurrentPlan();
+      const idx = Math.min(plan.length, Math.max(1, state.step)) - 1;
+      return plan[idx].screen;
+    }
+
+    function renderScope() {
+      const plan = getCurrentPlan();
+      stepEls.forEach((el, idx) => {
+        const item = plan[idx];
+        if (!item) {
+          el.style.display = "none";
+          el.hidden = true;
+          el.dataset.step = "0";
+          return;
+        }
+        el.style.display = "";
+        el.hidden = false;
+        el.dataset.step = String(idx + 1);
+        const title = el.querySelector("b");
+        const sub = el.querySelector("small");
+        const num = el.querySelector("i");
+        if (title) title.textContent = item.title;
+        if (sub) sub.textContent = item.sub;
+        if (num) num.textContent = String(idx + 1);
+      });
+      scopeButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.scope === state.scope);
+      });
+    }
+
+    function renderStep() {
+      const activeScreen = getActiveScreenNumber();
+      stepEls.forEach(el => {
+        const n = Number(el.dataset.step);
+        el.classList.toggle("active", n === state.step && n > 0);
+      });
+      screenEls.forEach(el => {
+        const n = Number(el.dataset.screen);
+        el.classList.toggle("active", n === activeScreen);
+      });
+      if (editKpisPanel) {
+        editKpisPanel.style.display = activeScreen === 2 ? "" : "none";
+      }
+      kStage.textContent = `Stage ${state.step}/${getActiveStepCount()}`;
+      if (activeScreen === 2 && tlkTable) {
+        window.setTimeout(() => tlkTable.redraw(true), 0);
+      }
+    }
+
+    function setImportMode(mode) {
+      state.importMode = mode;
+      modeButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.importMode === mode);
+      });
+      Object.keys(modePanels).forEach(key => {
+        modePanels[key].classList.toggle("active", key === mode);
+      });
+      state.sourceLoaded = false;
+      clearTlkBundleValidationMarks();
+      clearTlkValidationFeedback();
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function getDuplicateLocales() {
+      const counter = new Map();
+      state.tlkBundles.forEach(bundle => {
+        const locale = String(bundle.locale || "").toUpperCase().trim();
+        if (!locale) return;
+        counter.set(locale, (counter.get(locale) || 0) + 1);
+      });
+      return Array.from(counter.entries())
+        .filter(([, count]) => count > 1)
+        .map(([locale]) => locale);
+    }
+
+    function refreshTlkBundleSummary() {
+      if (!tlkBundleSummary) return;
+      if (state.tlkBundles.length === 0) {
+        tlkBundleSummary.textContent = "No locale packs configured.";
+        return;
+      }
+
+      const locales = state.tlkBundles.map(bundle => bundle.locale).join(", ");
+      const duplicateLocales = getDuplicateLocales();
+      tlkBundleSummary.textContent = duplicateLocales.length > 0
+        ? `${state.tlkBundles.length} locale packs: ${locales}. Duplicate locale: ${duplicateLocales.join(", ")}.`
+        : `${state.tlkBundles.length} locale packs: ${locales}.`;
+    }
+
+    function renderTlkBundles() {
+      if (!tlkBundleBody || !tlkBundleSummary) return;
+
+      if (state.tlkBundles.length === 0) {
+        tlkBundleBody.innerHTML = "<tr><td colspan='4' class='status-pending'>No locale packs configured.</td></tr>";
+        refreshTlkBundleSummary();
+        renderLocaleColumnConfig();
+        return;
+      }
+
+      tlkBundleBody.innerHTML = state.tlkBundles.map(bundle => {
+        const optionList = tlkLocaleOptions
+          .map(locale => `<option value='${locale}'${bundle.locale === locale ? " selected" : ""}>${locale}</option>`)
+          .join("");
+        return `<tr data-bundle-id='${bundle.id}'>
+          <td class='tlk-pack-cell'><select class='tlk-locale'>${optionList}</select></td>
+          <td class='tlk-pack-cell'><input class='tlk-dialog' value='${escapeHtml(bundle.dialog)}' placeholder='dialog_xx.tlk'></td>
+          <td class='tlk-pack-cell'><input class='tlk-dialogf' value='${escapeHtml(bundle.dialogf)}' placeholder='optional, fallback to dialog.tlk'></td>
+          <td><button class='tlk-pack-remove' type='button'>Remove</button></td>
+        </tr>`;
+      }).join("");
+
+      refreshTlkBundleSummary();
+      renderLocaleColumnConfig();
+    }
+
+    function addTlkBundle() {
+      const used = new Set(state.tlkBundles.map(bundle => bundle.locale));
+      const nextLocale = tlkLocaleOptions.find(locale => !used.has(locale)) || "EN";
+      const suffix = nextLocale.toLowerCase().replace(/[^a-z0-9]/g, "");
+      state.tlkBundles.push({
+        id: state.tlkBundleSeq,
+        locale: nextLocale,
+        dialog: `dialog_${suffix}.tlk`,
+        dialogf: `dialogf_${suffix}.tlk`,
+        dialogfAuto: false
+      });
+      state.tlkBundleSeq += 1;
+      renderTlkBundles();
+    }
+
+    function clearTlkValidationFeedback() {
+      if (!tlkValidationFeedback) return;
+      tlkValidationFeedback.className = "validation-feedback";
+      tlkValidationFeedback.textContent = "";
+    }
+
+    function setTlkValidationFeedback(type, message) {
+      if (!tlkValidationFeedback) return;
+      tlkValidationFeedback.className = `validation-feedback active ${type}`;
+      tlkValidationFeedback.textContent = message;
+    }
+
+    function clearTlkBundleValidationMarks() {
+      if (!tlkBundleBody) return;
+      tlkBundleBody.querySelectorAll(".invalid").forEach(el => el.classList.remove("invalid"));
+      tlkBundleBody.querySelectorAll(".tlk-pack-cell input, .tlk-pack-cell select").forEach(field => {
+        field.removeAttribute("aria-invalid");
+        field.removeAttribute("title");
+      });
+      tlkBundleBody.querySelectorAll(".invalid-cell").forEach(cell => {
+        cell.classList.remove("invalid-cell");
+        cell.removeAttribute("data-error");
+      });
+    }
+
+    function markTlkBundleFieldInvalid(bundleId, selector, errorMessage) {
+      if (!tlkBundleBody) return;
+      const row = tlkBundleBody.querySelector(`tr[data-bundle-id='${bundleId}']`);
+      if (!row) return;
+      const field = row.querySelector(selector);
+      if (field) {
+        field.classList.add("invalid");
+        field.setAttribute("aria-invalid", "true");
+        field.setAttribute("title", errorMessage);
+      }
+      const cell = field ? field.closest(".tlk-pack-cell") : null;
+      if (cell) {
+        cell.classList.add("invalid-cell");
+        cell.setAttribute("data-error", errorMessage);
+      }
+    }
+
+    function applyDialogfFallbacks() {
+      let fallbackCount = 0;
+      state.tlkBundles.forEach(bundle => {
+        const dialogValue = String(bundle.dialog || "").trim();
+        const dialogfValue = String(bundle.dialogf || "").trim();
+        if (!dialogfValue && dialogValue) {
+          bundle.dialogf = dialogValue;
+          bundle.dialogfAuto = true;
+          fallbackCount += 1;
+        }
+      });
+      return fallbackCount;
+    }
+
+    function validateTlkBundles() {
+      clearTlkBundleValidationMarks();
+      clearTlkValidationFeedback();
+
+      if (state.tlkBundles.length === 0) {
+        const message = "Add at least one TLK locale pack.";
+        setTlkValidationFeedback("error", message);
+        return { ok: false, message };
+      }
+
+      for (let index = 0; index < state.tlkBundles.length; index += 1) {
+        const bundle = state.tlkBundles[index];
+        const rowLabel = `Row ${index + 1}`;
+        bundle.locale = String(bundle.locale || "").toUpperCase().trim();
+        bundle.dialog = String(bundle.dialog || "").trim();
+        bundle.dialogf = String(bundle.dialogf || "").trim();
+
+        if (!bundle.locale) {
+          const message = `${rowLabel}: locale is required.`;
+          markTlkBundleFieldInvalid(bundle.id, ".tlk-locale", "Locale is required.");
+          setTlkValidationFeedback("error", message);
+          return { ok: false, message };
+        }
+
+        if (!bundle.dialog) {
+          const message = `${rowLabel} (${bundle.locale}): dialog.tlk is required.`;
+          markTlkBundleFieldInvalid(bundle.id, ".tlk-dialog", "dialog.tlk file name is required.");
+          setTlkValidationFeedback("error", message);
+          return { ok: false, message };
+        }
+
+        if (!bundle.dialog.toLowerCase().endsWith(".tlk")) {
+          const message = `${rowLabel} (${bundle.locale}): dialog file must end with .tlk`;
+          markTlkBundleFieldInvalid(bundle.id, ".tlk-dialog", "File extension must be .tlk");
+          setTlkValidationFeedback("error", message);
+          return { ok: false, message };
+        }
+
+        if (bundle.dialogf && !bundle.dialogf.toLowerCase().endsWith(".tlk")) {
+          const message = `${rowLabel} (${bundle.locale}): dialogf file must end with .tlk or stay empty for fallback.`;
+          markTlkBundleFieldInvalid(bundle.id, ".tlk-dialogf", "Use .tlk extension or leave empty.");
+          setTlkValidationFeedback("error", message);
+          return { ok: false, message };
+        }
+      }
+
+      const duplicateLocales = getDuplicateLocales();
+      if (duplicateLocales.length > 0) {
+        state.tlkBundles
+          .filter(bundle => duplicateLocales.includes(bundle.locale))
+          .forEach(bundle => markTlkBundleFieldInvalid(bundle.id, ".tlk-locale", "Duplicate locale."));
+        const message = `Duplicate locale packs: ${duplicateLocales.join(", ")}. Each locale must be unique.`;
+        setTlkValidationFeedback("error", message);
+        return { ok: false, message };
+      }
+
+      setTlkValidationFeedback("success", "Validation passed. You can load source.");
+      return { ok: true, message: "" };
+    }
+
+    function updateFileInfoLabels() {
+      if (xlsxSourceInfo) {
+        xlsxSourceInfo.textContent = state.sourceXlsxFile
+          ? `Selected: ${state.sourceXlsxFile.name}`
+          : "Use this when restarting from reviewed spreadsheet.";
+      }
+      if (approvedXlsxInfo) {
+        approvedXlsxInfo.textContent = state.approvedXlsxFile
+          ? `Selected: ${state.approvedXlsxFile.name}`
+          : "Select merged XLSX to close exchange scope.";
+      }
+      if (mergedXlsxInfo) {
+        mergedXlsxInfo.textContent = state.mergedXlsxFile
+          ? `Selected: ${state.mergedXlsxFile.name}`
+          : "Select merged XLSX for rebuild scope.";
+      }
+    }
+
+    function getSelectedTlkFilesMap() {
+      const files = tlkFileInput && tlkFileInput.files ? Array.from(tlkFileInput.files) : [];
+      return files.reduce((acc, file) => {
+        acc[fileNameToken(file.name)] = file;
+        return acc;
+      }, {});
+    }
+
+    async function parseWorkbookFile(file) {
+      if (!file) throw new Error("Select XLSX file first.");
+      if (!hasXlsxRuntime()) throw new Error("XLSX runtime failed to load.");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("XLSX workbook has no sheets.");
+      const sheet = workbook.Sheets[firstSheetName];
+      const jsonRows = XLSX.utils.sheet_to_json(sheet, {
+        defval: "",
+        raw: false,
+        blankrows: false
+      });
+      if (!Array.isArray(jsonRows) || jsonRows.length === 0) {
+        throw new Error("XLSX has no data rows.");
+      }
+      return {
+        workbook,
+        sheetName: firstSheetName,
+        rows: jsonRows
+      };
+    }
+
+    async function loadSourceFromXlsxFile(file, sourceLabel) {
+      const parsed = await parseWorkbookFile(file);
+      const rows = buildTlkRowsFromXlsxRows(parsed.rows);
+      if (rows.length === 0) {
+        throw new Error("XLSX has no StrRef rows.");
+      }
+
+      const columnKeys = Object.keys(parsed.rows[0] || {});
+      const localeColumns = localeColumnsFromXlsxColumns(columnKeys);
+      if (localeColumns.length > 0) {
+        state.gridLocaleColumns = localeColumns;
+      }
+      state.sourceMeta = {
+        kind: "xlsx",
+        fileName: file.name,
+        sheetName: parsed.sheetName
+      };
+      applyRowsToGrid(rows, sourceLabel || `XLSX source loaded: ${file.name}`);
+      return rows.length;
+    }
+
+    async function loadSourceFromTlkFiles() {
+      const validation = validateTlkBundles();
+      if (!validation.ok) throw new Error(validation.message);
+      const fallbackCount = applyDialogfFallbacks();
+      renderTlkBundles();
+
+      const fileMap = getSelectedTlkFilesMap();
+      const selectedCount = Object.keys(fileMap).length;
+      if (selectedCount === 0) {
+        throw new Error("Select TLK files first.");
+      }
+
+      const parsedBundles = [];
+
+      for (let i = 0; i < state.tlkBundles.length; i += 1) {
+        const bundle = state.tlkBundles[i];
+        const dialogName = safeFileNameFromPath(bundle.dialog);
+        const dialogFile = fileMap[fileNameToken(dialogName)];
+        if (!dialogFile) {
+          markTlkBundleFieldInvalid(bundle.id, ".tlk-dialog", `File not selected: ${dialogName}`);
+          throw new Error(`Missing file for ${bundle.locale}: ${dialogName}`);
+        }
+        const parsedDialog = parseSingleTlkBuffer(await dialogFile.arrayBuffer(), dialogFile.name);
+
+        let parsedDialogf = null;
+        if (!bundle.dialogfAuto && String(bundle.dialogf || "").trim().length > 0) {
+          const dialogfName = safeFileNameFromPath(bundle.dialogf);
+          const dialogfFile = fileMap[fileNameToken(dialogfName)];
+          if (!dialogfFile) {
+            markTlkBundleFieldInvalid(bundle.id, ".tlk-dialogf", `File not selected: ${dialogfName}`);
+            throw new Error(`Missing dialogf for ${bundle.locale}: ${dialogfName}`);
+          }
+          parsedDialogf = parseSingleTlkBuffer(await dialogfFile.arrayBuffer(), dialogfFile.name);
+          if (parsedDialogf.entryCount !== parsedDialog.entryCount) {
+            markTlkBundleFieldInvalid(bundle.id, ".tlk-dialogf", "dialogf entry count must match dialog.");
+            throw new Error(`Entry count mismatch for ${bundle.locale}: dialog vs dialogf.`);
+          }
+        }
+
+        parsedBundles.push({
+          bundle,
+          parsed: parsedDialog,
+          dialogfParsed: parsedDialogf
+        });
+      }
+
+      const baselineCount = parsedBundles[0].parsed.entryCount;
+      for (let i = 1; i < parsedBundles.length; i += 1) {
+        if (parsedBundles[i].parsed.entryCount !== baselineCount) {
+          throw new Error(
+            `Entry count mismatch: ${parsedBundles[0].bundle.locale}=${baselineCount}, ${parsedBundles[i].bundle.locale}=${parsedBundles[i].parsed.entryCount}.`
+          );
+        }
+      }
+
+      const rows = buildRowsFromParsedTlkBundles(parsedBundles);
+      const locales = state.tlkBundles.map(bundle => bundle.locale).join(", ");
+      const sourceLabel = `TLK source loaded: ${state.tlkBundles.length} locale packs (${locales}), ${rows.length} rows`;
+      state.sourceMeta = {
+        kind: "tlk",
+        entryCount: baselineCount,
+        fallbackCount
+      };
+      applyRowsToGrid(rows, sourceLabel);
+      state.tlkFilesByName = fileMap;
+      if (fallbackCount > 0) {
+        setTlkValidationFeedback("warn", `Loaded with fallback for ${fallbackCount} locale pack(s): dialogf -> dialog.tlk.`);
+      } else {
+        setTlkValidationFeedback("success", "Loaded successfully. Ready for parse and schema validation.");
+      }
+      return rows.length;
+    }
+
+    function buildSourceLabel() {
+      if (state.importMode === "tlk") {
+        const locales = state.tlkBundles.map(bundle => bundle.locale).join(", ");
+        const countLabel = state.editTotalRows > 0 ? `, ${state.editTotalRows} rows` : "";
+        return `TLK source loaded: ${state.tlkBundles.length} locale packs (${locales}${countLabel})`;
+      }
+      if (state.importMode === "xlsx") {
+        const fileName = state.sourceXlsxFile ? state.sourceXlsxFile.name : "localization_sheet_v4.xlsx";
+        return `Spreadsheet source loaded: ${fileName}`;
+      }
+      const repo = document.getElementById("repoName").value.trim();
+      const branch = document.getElementById("repoBranch").value.trim();
+      const path = document.getElementById("repoPath").value.trim();
+      return `Repo source loaded: ${repo} @ ${branch} -> ${path}`;
+    }
+
+    function closePrModal() {
+      if (!prModal) return;
+      prModal.classList.remove("active");
+    }
+
+    function openPrModal(url, statusCode) {
+      if (!prModal || !prModalLink || !prModalMessage) return;
+      prModalMessage.textContent = `Push completed successfully (HTTP ${statusCode}).`;
+      prModalLink.textContent = url;
+      prModalLink.href = url;
+      prModal.classList.add("active");
+    }
+
+    async function publishPrRequestMock() {
+      await new Promise(resolve => window.setTimeout(resolve, 650));
+      return {
+        status: 200,
+        prUrl: "https://github.com/nwn-localization/tlk-community-sheet/pull/142"
+      };
+    }
+
+    function makeQaBundleFileName() {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return `qa_bundle_${timestamp}.json`;
+    }
+
+    function buildQaBundlePayload() {
+      const artifacts = artifactBody
+        ? Array.from(artifactBody.querySelectorAll("tr"))
+          .map(row => {
+            const cells = row.querySelectorAll("td");
+            if (cells.length < 3) return null;
+            return {
+              file: String(cells[0].textContent || "").trim(),
+              status: String(cells[1].textContent || "").trim(),
+              checksum: String(cells[2].textContent || "").trim()
+            };
+          })
+          .filter(Boolean)
+        : [];
+
+      return {
+        format: "qa-bundle-v1",
+        generatedAt: nowLabel(),
+        sourceLabel: state.sourceLabel || "not-loaded",
+        summary: {
+          coverage: String(kCoverage.textContent || "").trim(),
+          qaWarnings: String(kQa.textContent || "").trim(),
+          blockingErrors: String(kBlocking.textContent || "").trim(),
+          tokenParity: String(kParity.textContent || "").trim(),
+          rowsWithIssues: String(kRowsIssues.textContent || "").trim()
+        },
+        artifacts
+      };
+    }
+
+    function setBuildStatus(text) {
+      if (!buildStateEl) return;
+      buildStateEl.textContent = text;
+    }
+
+    function syncBuildControls() {
+      if (!btnRebuild) return;
+      if (state.building) {
+        btnRebuild.disabled = true;
+        btnRebuild.textContent = "Building...";
+        return;
+      }
+      if (!state.imported) {
+        btnRebuild.disabled = true;
+        btnRebuild.textContent = "Build TLK";
+        if (!state.built) {
+          setBuildStatus("Status: Waiting for approved XLSX import.");
+        }
+        return;
+      }
+      btnRebuild.disabled = false;
+      btnRebuild.textContent = state.built ? "Rebuild TLK" : "Build TLK";
+    }
+
+    function syncPublishControls() {
+      const ready = state.exported;
+      if (btnDownloadLocalCopy) {
+        btnDownloadLocalCopy.disabled = !ready;
+        btnDownloadLocalCopy.title = ready ? "" : "Generate XLSX first.";
+      }
+      if (btnPrOpen) {
+        btnPrOpen.disabled = !ready;
+        btnPrOpen.title = ready ? "" : "Generate XLSX first.";
+      }
+    }
+
+    function renderDiffRows(diffRows) {
+      if (!diffTableBody) return;
+      const rows = Array.isArray(diffRows) ? diffRows : [];
+      if (rows.length === 0) {
+        diffTableBody.innerHTML = "<tr><td colspan='5'>No changed rows detected.</td></tr>";
+        return;
+      }
+      diffTableBody.innerHTML = rows.map(item => `
+        <tr>
+          <td>${escapeHtml(String(item.strRef))}</td>
+          <td>${escapeHtml(item.locale)}</td>
+          <td>${escapeHtml(item.before)}</td>
+          <td>${escapeHtml(item.after)}</td>
+          <td class='${item.statusClass}'>${escapeHtml(item.statusLabel)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function applyTheme(theme) {
+      const isDark = theme === "dark";
+      document.body.classList.toggle("dark", isDark);
+      if (!themeToggle) return;
+      themeToggle.setAttribute("aria-pressed", String(isDark));
+      themeToggle.textContent = isDark ? "Light mode" : "Dark mode";
+      themeToggle.classList.toggle("active", isDark);
+    }
+
+    function saveTheme(theme) {
+      try {
+        window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+      } catch (error) {
+        // ignore storage failures in restricted contexts
+      }
+    }
+
+    function getInitialTheme() {
+      try {
+        const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+        if (saved === "dark" || saved === "light") return saved;
+      } catch (error) {
+        // ignore storage failures in restricted contexts
+      }
+      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return prefersDark ? "dark" : "light";
+    }
+
+    function gotoStep(n) {
+      state.step = Math.min(getActiveStepCount(), Math.max(1, n));
+      renderStep();
+    }
+
+    stepEls.forEach(el => {
+      el.addEventListener("click", () => gotoStep(Number(el.dataset.step)));
+    });
+
+    modeButtons.forEach(btn => {
+      btn.addEventListener("click", () => setImportMode(btn.dataset.importMode));
+    });
+
+    if (tlkFileInput) {
+      tlkFileInput.addEventListener("change", () => {
+        const count = tlkFileInput.files ? tlkFileInput.files.length : 0;
+        state.sourceLoaded = false;
+        clearTlkBundleValidationMarks();
+        clearTlkValidationFeedback();
+        if (count > 0) {
+          stamp(`Selected ${count} TLK file(s).`);
+        }
+      });
+    }
+
+    if (xlsxSourceInput) {
+      xlsxSourceInput.addEventListener("change", () => {
+        state.sourceXlsxFile = xlsxSourceInput.files && xlsxSourceInput.files[0] ? xlsxSourceInput.files[0] : null;
+        state.sourceLoaded = false;
+        updateFileInfoLabels();
+      });
+    }
+
+    if (approvedXlsxInput) {
+      approvedXlsxInput.addEventListener("change", () => {
+        state.approvedXlsxFile = approvedXlsxInput.files && approvedXlsxInput.files[0] ? approvedXlsxInput.files[0] : null;
+        updateFileInfoLabels();
+      });
+    }
+
+    if (mergedXlsxInput) {
+      mergedXlsxInput.addEventListener("change", () => {
+        state.mergedXlsxFile = mergedXlsxInput.files && mergedXlsxInput.files[0] ? mergedXlsxInput.files[0] : null;
+        updateFileInfoLabels();
+      });
+    }
+
+    if (btnAddTlkBundle) {
+      btnAddTlkBundle.addEventListener("click", () => {
+        addTlkBundle();
+        state.sourceLoaded = false;
+        clearTlkBundleValidationMarks();
+        clearTlkValidationFeedback();
+      });
+    }
+
+    if (tlkBundleBody) {
+      const syncBundleField = target => {
+        const row = target.closest("tr[data-bundle-id]");
+        if (!row) return;
+        const bundleId = Number(row.dataset.bundleId);
+        const bundle = state.tlkBundles.find(item => item.id === bundleId);
+        if (!bundle) return;
+
+        if (target.classList.contains("tlk-locale")) {
+          bundle.locale = target.value;
+          state.sourceLoaded = false;
+          clearTlkBundleValidationMarks();
+          clearTlkValidationFeedback();
+          refreshTlkBundleSummary();
+          renderLocaleColumnConfig();
+          return;
+        }
+
+        if (target.classList.contains("tlk-dialog")) {
+          bundle.dialog = target.value;
+          state.sourceLoaded = false;
+          clearTlkBundleValidationMarks();
+          clearTlkValidationFeedback();
+          return;
+        }
+
+        if (target.classList.contains("tlk-dialogf")) {
+          bundle.dialogf = target.value;
+          bundle.dialogfAuto = false;
+          state.sourceLoaded = false;
+          clearTlkBundleValidationMarks();
+          clearTlkValidationFeedback();
+          renderLocaleColumnConfig();
+        }
+      };
+
+      tlkBundleBody.addEventListener("input", event => {
+        syncBundleField(event.target);
+      });
+
+      tlkBundleBody.addEventListener("change", event => {
+        syncBundleField(event.target);
+      });
+
+      tlkBundleBody.addEventListener("click", event => {
+        const removeBtn = event.target.closest(".tlk-pack-remove");
+        if (!removeBtn) return;
+        const row = removeBtn.closest("tr[data-bundle-id]");
+        if (!row) return;
+        const bundleId = Number(row.dataset.bundleId);
+        state.tlkBundles = state.tlkBundles.filter(item => item.id !== bundleId);
+        state.sourceLoaded = false;
+        renderTlkBundles();
+        clearTlkBundleValidationMarks();
+        clearTlkValidationFeedback();
+      });
+    }
+
+    scopeButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.scope = btn.dataset.scope;
+        state.step = 1;
+        renderScope();
+        renderStep();
+        stamp(state.scope === "exchange"
+          ? "Switched to Exchange scope."
+          : "Switched to Rebuild scope.");
+      });
+    });
+
+    if (btnAddExtraLocale && extraLocaleSelect) {
+      btnAddExtraLocale.addEventListener("click", () => {
+        const selected = normalizeLocaleCode(extraLocaleSelect.value);
+        if (!selected) return;
+        if (state.extraXlsxLocales.includes(selected)) return;
+        state.extraXlsxLocales.push(selected);
+        refreshGridFromLocaleConfig();
+        stamp(`Added optional XLS locale column: ${selected}.`);
+      });
+    }
+
+    if (extraLocaleColumns) {
+      extraLocaleColumns.addEventListener("click", event => {
+        const removeButton = event.target.closest("[data-extra-locale]");
+        if (!removeButton) return;
+        const locale = normalizeLocaleCode(removeButton.dataset.extraLocale);
+        state.extraXlsxLocales = state.extraXlsxLocales.filter(item => item !== locale);
+        refreshGridFromLocaleConfig();
+        stamp(`Removed optional XLS locale column: ${locale}.`);
+      });
+    }
+
+    if (themeToggle) {
+      themeToggle.addEventListener("click", () => {
+        const isDark = document.body.classList.contains("dark");
+        const nextTheme = isDark ? "light" : "dark";
+        applyTheme(nextTheme);
+        saveTheme(nextTheme);
+      });
+    }
+
+    btnUndo.addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.undo();
+      updateChangeTracking();
+      stamp("Undo: last grid change.");
+    });
+
+    btnRedo.addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.redo();
+      updateChangeTracking();
+      stamp("Redo: last grid change.");
+    });
+
+    document.getElementById("btnAutoFill").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load and parse source first.");
+      if (!tlkTable) return stamp("Grid is not ready.");
+      const localeFields = getEditableLocaleFields();
+      if (localeFields.length === 0) return stamp("No locale columns configured yet.");
+
+      const rows = tlkTable.getRows("visible");
+      let filled = 0;
+      rows.forEach(row => {
+        const data = row.getData();
+        localeFields.forEach(field => {
+          const current = String(data[field] || "").trim();
+          if (current) return;
+          row.getCell(field).setValue(`[AUTO] ${data.sourceEn || ""}`, true);
+          filled += 1;
+        });
+        row.update({ status: "Needs QA" });
+      });
+      state.autoFilled = true;
+      editState.textContent = `Auto-fill completed. Filled ${filled} missing cells in current viewport.`;
+      updateChangeTracking();
+      stamp("Auto-fill finished: empty locale cells populated with fallback policy.");
+    });
+
+    document.getElementById("btnAutoTranslate").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load and parse source first.");
+      if (!tlkTable) return stamp("Grid is not ready.");
+      const localeFields = getEditableLocaleFields();
+      if (localeFields.length === 0) return stamp("No locale columns configured yet.");
+
+      const rows = tlkTable.getRows("visible");
+      let translated = 0;
+      rows.forEach(row => {
+        const data = row.getData();
+        localeFields.forEach(field => {
+          const current = String(data[field] || "").trim();
+          if (current) return;
+          row.getCell(field).setValue(`[MT] ${data.sourceEn}`, true);
+          translated += 1;
+        });
+        row.update({ status: "MT Draft" });
+      });
+      state.autoTranslated = true;
+      editState.textContent = `Auto-translate completed for ${translated} missing cells.`;
+      updateChangeTracking();
+      stamp("Auto-translate completed on missing entries.");
+    });
+
+    document.getElementById("btnRunQa").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load and parse source first.");
+      if (!tlkTable) return stamp("Grid is not ready.");
+      const localeFields = getEditableLocaleFields();
+      if (localeFields.length === 0) return stamp("No locale columns configured yet.");
+
+      const rows = tlkTable.getRows("visible");
+      let tokenMismatch = 0;
+      let emptyCells = 0;
+      let totalLocaleCells = 0;
+      let filledLocaleCells = 0;
+      rows.forEach(row => {
+        const data = row.getData();
+        totalLocaleCells += localeFields.length;
+        filledLocaleCells += localeFields.filter(field => String(data[field] || "").trim().length > 0).length;
+        const hasEmpty = localeFields.some(field => !String(data[field] || "").trim());
+        if (hasEmpty) {
+          emptyCells += 1;
+          row.update({ status: "Needs QA" });
+          return;
+        }
+        const hasTokenIssue = localeFields.some(field => {
+          const value = String(data[field] || "");
+          return value.includes("{PLAYER}") && !value.includes("{PLAYER_NAME}");
+        });
+        if (hasTokenIssue) {
+          tokenMismatch += 1;
+          row.update({ status: "Error" });
+          return;
+        }
+        row.update({ status: "Validated" });
+      });
+      state.qaRan = true;
+      const coverage = totalLocaleCells > 0 ? (filledLocaleCells / totalLocaleCells) * 100 : 0;
+      const roundedCoverage = `${Math.round(coverage * 10) / 10}%`;
+      kCoverage.textContent = roundedCoverage;
+      kQa.textContent = String(emptyCells + tokenMismatch);
+      kBlocking.textContent = String(tokenMismatch);
+      kParity.textContent = tokenMismatch > 0 ? `${Math.max(0, 100 - (tokenMismatch / Math.max(1, rows.length)) * 100).toFixed(1)}%` : "100%";
+      kRowsIssues.textContent = String(emptyCells + tokenMismatch);
+      editState.textContent = `QA validation completed: token mismatch=${tokenMismatch}, empty rows=${emptyCells}.`;
+      updateChangeTracking();
+      stamp("QA validation completed for current dataset.");
+    });
+
+    document.getElementById("btnPageFirst").addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.setPage("first").then(() => updatePagingToolbar());
+    });
+    document.getElementById("btnPagePrev").addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.setPage("prev").then(() => updatePagingToolbar());
+    });
+    document.getElementById("btnPageNext").addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.setPage("next").then(() => updatePagingToolbar());
+    });
+    document.getElementById("btnPageLast").addEventListener("click", () => {
+      if (!tlkTable) return;
+      tlkTable.setPage("last").then(() => updatePagingToolbar());
+    });
+    editPageSizeSelect.addEventListener("change", () => {
+      const parsed = Number(editPageSizeSelect.value);
+      state.editPageSize = Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
+      if (!tlkTable) return;
+      tlkTable.setPageSize(state.editPageSize);
+      tlkTable.setPage(1).then(() => updatePagingToolbar());
+    });
+
+    document.getElementById("btnImport").addEventListener("click", async () => {
+      try {
+        if (state.importMode === "tlk") {
+          const loadedRows = await loadSourceFromTlkFiles();
+          stamp(`${buildSourceLabel()}. Loaded ${loadedRows} rows.`);
+          return;
+        }
+
+        if (state.importMode === "xlsx") {
+          if (!state.sourceXlsxFile) return stamp("Select XLSX file first.");
+          const loadedRows = await loadSourceFromXlsxFile(state.sourceXlsxFile, buildSourceLabel());
+          stamp(`${buildSourceLabel()}. Loaded ${loadedRows} rows.`);
+          return;
+        }
+
+        state.sourceLoaded = true;
+        state.sourceLabel = buildSourceLabel();
+        stamp(`${state.sourceLabel}. Repo mode metadata captured (file fetch requires connector/backend).`);
+      } catch (error) {
+        const message = error && error.message ? error.message : "Load failed.";
+        setTlkValidationFeedback("error", message);
+        stamp(message);
+      }
+    });
+
+    document.getElementById("btnAnalyze").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load one import source first (TLK/XLSX/Repo branch).");
+      refreshGridFromLocaleConfig();
+      const total = state.editTotalRows;
+      stamp(`Schema validated for ${state.importMode.toUpperCase()} source. Parsed ${total} rows.`);
+      gotoStep(2);
+    });
+
+    document.getElementById("btnApplyEdits").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load and parse source first.");
+      if (!tlkTable) return stamp("Grid is not ready.");
+      const rows = tlkTable.getRows("active");
+      rows.forEach(row => row.update({ status: "Validated" }));
+      state.edited = true;
+      editState.textContent = `${rows.length} rows marked as validated.`;
+      kParity.textContent = "100%";
+      kRowsIssues.textContent = "0";
+      updateChangeTracking();
+      stamp("Manual TLK edits applied to working model.");
+    });
+
+    document.getElementById("btnToExport").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Import and parse source first.");
+      if (!state.edited) return stamp("Apply TLK edits first, then continue.");
+      stamp("TLK edit session saved. Moving to XLSX export.");
+      gotoStep(3);
+    });
+
+    document.getElementById("btnExport").addEventListener("click", () => {
+      if (!state.sourceLoaded) return stamp("Load and parse source first.");
+      if (!hasXlsxRuntime()) return stamp("XLSX runtime unavailable.");
+      const exportedRows = buildXlsxRowsForExport();
+      if (exportedRows.length === 0) return stamp("No rows to export.");
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(exportedRows);
+      XLSX.utils.book_append_sheet(wb, ws, "TLK_Sheet");
+
+      const fileName = makeXlsxFileName();
+      XLSX.writeFile(wb, fileName);
+      state.lastGeneratedXlsx = fileName;
+      state.exported = true;
+      document.getElementById("xlsxState").textContent = `XLSX generated: ${fileName} (${exportedRows.length} rows)`;
+      document.getElementById("exportBar").style.width = "100%";
+      syncPublishControls();
+      stamp("Spreadsheet exported as XLSX.");
+      gotoStep(4);
+    });
+
+    if (btnDownloadLocalCopy) {
+      btnDownloadLocalCopy.addEventListener("click", async () => {
+        if (!state.exported) return stamp("Generate XLSX first.");
+        if (!hasXlsxRuntime()) return stamp("XLSX runtime unavailable.");
+
+        const originalLabel = btnDownloadLocalCopy.textContent;
+        btnDownloadLocalCopy.disabled = true;
+        btnDownloadLocalCopy.textContent = "Saving...";
+        try {
+          const rows = buildXlsxRowsForExport();
+          const wb = XLSX.utils.book_new();
+          const ws = XLSX.utils.json_to_sheet(rows);
+          XLSX.utils.book_append_sheet(wb, ws, "TLK_Sheet");
+          const fileName = makeXlsxFileName();
+          XLSX.writeFile(wb, fileName);
+          state.lastGeneratedXlsx = fileName;
+          stamp(`Local XLSX copy saved: ${fileName}.`);
+        } catch (error) {
+          stamp("Local copy export canceled or failed.");
+        } finally {
+          btnDownloadLocalCopy.textContent = originalLabel;
+          syncPublishControls();
+        }
+      });
+    }
+
+    if (btnPrOpen) {
+      btnPrOpen.addEventListener("click", async () => {
+        if (!state.exported) return stamp("Export XLSX first.");
+
+        const originalLabel = btnPrOpen.textContent;
+        btnPrOpen.disabled = true;
+        btnPrOpen.textContent = "Publishing...";
+
+        try {
+          const result = await publishPrRequestMock();
+          if (result.status === 200 && result.prUrl) {
+            state.pushed = true;
+            state.prOpen = true;
+            openPrModal(result.prUrl, result.status);
+            stamp("XLSX pushed and pull request opened. Merge is handled manually in GitHub/Git.");
+            return;
+          }
+          stamp(`PR publish failed (HTTP ${result.status}).`);
+        } catch (error) {
+          stamp("PR publish failed due to network error.");
+        } finally {
+          btnPrOpen.disabled = false;
+          btnPrOpen.textContent = originalLabel;
+        }
+      });
+    }
+
+    if (btnOpenPrUrl) {
+      btnOpenPrUrl.addEventListener("click", () => {
+        if (!prModalLink || !prModalLink.href) return;
+        window.open(prModalLink.href, "_blank", "noopener,noreferrer");
+      });
+    }
+
+    if (btnCopyPrUrl) {
+      btnCopyPrUrl.addEventListener("click", async () => {
+        if (!prModalLink || !prModalLink.href) return;
+        try {
+          await navigator.clipboard.writeText(prModalLink.href);
+          btnCopyPrUrl.textContent = "Copied";
+          window.setTimeout(() => {
+            btnCopyPrUrl.textContent = "Copy URL";
+          }, 1200);
+        } catch (error) {
+          stamp("Copy failed. Use Open PR and copy from browser.");
+        }
+      });
+    }
+
+    if (btnClosePrModal) {
+      btnClosePrModal.addEventListener("click", () => closePrModal());
+    }
+
+    if (prModal) {
+      prModal.addEventListener("click", event => {
+        if (event.target === prModal) closePrModal();
+      });
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && prModal.classList.contains("active")) {
+          closePrModal();
+        }
+      });
+    }
+
+    document.getElementById("btnImportXlsxDirect").addEventListener("click", async () => {
+      const btn = document.getElementById("btnImportXlsxDirect");
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Importing...";
+      try {
+        if (!state.approvedXlsxFile) throw new Error("Select approved XLSX first.");
+        await loadSourceFromXlsxFile(state.approvedXlsxFile, `Approved XLSX imported: ${state.approvedXlsxFile.name}`);
+        state.exchangeClosed = true;
+        state.imported = true;
+        state.built = false;
+        state.building = false;
+        kCoverage.textContent = "100%";
+        kQa.textContent = "0";
+        kBlocking.textContent = "0";
+        kParity.textContent = "100%";
+        kRowsIssues.textContent = "0";
+        setBuildStatus("Status: XLSX imported. Ready to build TLK/TLKF.");
+        syncBuildControls();
+        stamp("Approved XLSX imported. Exchange scope closed.");
+        gotoStep(2);
+      } catch (error) {
+        stamp(error && error.message ? error.message : "XLSX import failed.");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
+    document.getElementById("btnImportXlsx").addEventListener("click", async () => {
+      try {
+        if (!state.mergedXlsxFile) return stamp("Select merged XLSX first.");
+        await loadSourceFromXlsxFile(state.mergedXlsxFile, `Merged XLSX imported: ${state.mergedXlsxFile.name}`);
+        state.imported = true;
+        state.built = false;
+        state.building = false;
+        document.getElementById("importState").textContent = `Imported merged XLSX: ${state.mergedXlsxFile.name}`;
+        document.getElementById("importBar").style.width = "100%";
+        kCoverage.textContent = "100%";
+        kQa.textContent = "0";
+        kBlocking.textContent = "0";
+        kParity.textContent = "100%";
+        kRowsIssues.textContent = "0";
+        setBuildStatus("Status: XLSX imported. Ready to build TLK/TLKF.");
+        syncBuildControls();
+        stamp("Spreadsheet imported and normalized to internal TLK model.");
+        gotoStep(2);
+      } catch (error) {
+        stamp(error && error.message ? error.message : "XLSX import failed.");
+      }
+    });
+
+    document.getElementById("btnDiffReport").addEventListener("click", () => {
+      if (!tlkTable || !state.sourceLoaded) return stamp("Load source first.");
+      const currentRows = tlkTable.getData();
+      const baselineMap = new Map((state.sourceRows || []).map(row => [Number(row.id), row]));
+      let changed = 0;
+      let added = 0;
+      let removed = 0;
+      let conflicts = 0;
+      const preview = [];
+
+      const getTokens = value => String(value || "").match(/\{[A-Z0-9_]+\}/g) || [];
+
+      currentRows.forEach(row => {
+        const baseline = baselineMap.get(Number(row.id)) || {};
+        state.gridLocaleColumns.forEach(col => {
+          const before = String(baseline[col.field] || "");
+          const after = String(row[col.field] || "");
+          if (before === after) return;
+          changed += 1;
+          let statusLabel = "Updated";
+          let statusClass = "status-ok";
+          if (!before && after) {
+            added += 1;
+            statusLabel = "Added";
+          } else if (before && !after) {
+            removed += 1;
+            statusLabel = "Removed in XLSX";
+            statusClass = "status-warn";
+          } else {
+            const beforeTokens = getTokens(before).join("|");
+            const afterTokens = getTokens(after).join("|");
+            if (beforeTokens !== afterTokens) {
+              conflicts += 1;
+              statusLabel = "Token mismatch";
+              statusClass = "status-warn";
+            }
+          }
+          if (preview.length < 8) {
+            preview.push({
+              strRef: row.strRef,
+              locale: col.title,
+              before: before || "-",
+              after: after || "-",
+              statusLabel,
+              statusClass
+            });
+          }
+        });
+      });
+
+      state.diffGenerated = true;
+      diffPanel.classList.add("active");
+      diffStamp.textContent = `Generated: ${nowLabel()}`;
+      diffChanged.textContent = String(changed);
+      diffAdded.textContent = String(added);
+      diffRemoved.textContent = String(removed);
+      diffConflicts.textContent = String(conflicts);
+      diffSummary.textContent = `Compared current grid with source baseline. Changed: ${changed}, token conflicts: ${conflicts}.`;
+      renderDiffRows(preview);
+      stamp("Diff report generated for approved XLSX import.");
+    });
+
+    document.getElementById("btnDiffJson").addEventListener("click", async () => {
+      if (!state.diffGenerated) return stamp("Generate diff report first.");
+      const payload = {
+        generatedAt: nowLabel(),
+        changed: Number(diffChanged.textContent || 0),
+        added: Number(diffAdded.textContent || 0),
+        removed: Number(diffRemoved.textContent || 0),
+        conflicts: Number(diffConflicts.textContent || 0),
+        summary: diffSummary.textContent || "",
+        rows: Array.from(diffTableBody.querySelectorAll("tr")).map(tr => {
+          const cells = tr.querySelectorAll("td");
+          return {
+            strRef: cells[0] ? cells[0].textContent : "",
+            locale: cells[1] ? cells[1].textContent : "",
+            before: cells[2] ? cells[2].textContent : "",
+            after: cells[3] ? cells[3].textContent : "",
+            status: cells[4] ? cells[4].textContent : ""
+          };
+        })
+      };
+      const bytes = new TextEncoder().encode(JSON.stringify(payload, null, 2));
+      const result = await saveBytesToDisk(bytes, "diff_report.json", "application/json");
+      stamp(`Diff JSON exported (${result.method}): ${result.fileName}.`);
+    });
+
+    document.getElementById("btnDiffMarkdown").addEventListener("click", async () => {
+      if (!state.diffGenerated) return stamp("Generate diff report first.");
+      const rows = Array.from(diffTableBody.querySelectorAll("tr")).map(tr => {
+        const cells = tr.querySelectorAll("td");
+        return {
+          strRef: cells[0] ? cells[0].textContent : "",
+          locale: cells[1] ? cells[1].textContent : "",
+          before: cells[2] ? cells[2].textContent : "",
+          after: cells[3] ? cells[3].textContent : "",
+          status: cells[4] ? cells[4].textContent : ""
+        };
+      });
+      const lines = [
+        "# TLK Diff Report",
+        "",
+        `Generated: ${nowLabel()}`,
+        "",
+        `Changed: ${diffChanged.textContent || "0"}`,
+        `Added: ${diffAdded.textContent || "0"}`,
+        `Removed: ${diffRemoved.textContent || "0"}`,
+        `Conflicts: ${diffConflicts.textContent || "0"}`,
+        "",
+        diffSummary.textContent || "",
+        "",
+        "| StrRef | Locale | Before | After | Status |",
+        "| --- | --- | --- | --- | --- |"
+      ];
+      rows.forEach(item => {
+        lines.push(`| ${item.strRef} | ${item.locale} | ${item.before} | ${item.after} | ${item.status} |`);
+      });
+      const bytes = new TextEncoder().encode(lines.join("\n"));
+      const result = await saveBytesToDisk(bytes, "diff_report.md", "text/markdown");
+      stamp(`Diff Markdown exported (${result.method}): ${result.fileName}.`);
+    });
+
+    if (btnRebuild) {
+      btnRebuild.addEventListener("click", async () => {
+        if (!state.imported) return stamp("Import reviewed XLSX first.");
+        if (state.building) return;
+        if (!tlkTable) return stamp("Grid is not ready.");
+
+        state.building = true;
+        syncBuildControls();
+        setBuildStatus("Status: Building TLK/TLKF artifacts...");
+
+        try {
+          const rows = tlkTable.getData();
+          if (!rows.length) throw new Error("No rows to build.");
+
+          const artifacts = [];
+          for (let i = 0; i < state.gridLocaleColumns.length; i += 1) {
+            const col = state.gridLocaleColumns[i];
+            const locale = normalizeLocaleCode(col.locale);
+            const bundle = state.tlkBundles.find(item => normalizeLocaleCode(item.locale) === locale);
+            const isDialogf = col.variant === "dialogf";
+            const languageId = TLK_LOCALE_TO_LANGUAGE_ID[locale] ?? 0;
+            const baseName = state.sourceMeta && state.sourceMeta.kind === "tlk" ? "rebuilt" : "converted";
+
+            let outName = "";
+            if (bundle) {
+              if (isDialogf && bundle.dialogf && !bundle.dialogfAuto) {
+                outName = safeFileNameFromPath(bundle.dialogf);
+              } else if (!isDialogf && bundle.dialog) {
+                outName = safeFileNameFromPath(bundle.dialog);
+              }
+            }
+            if (!outName) {
+              outName = makeTlkFileName(baseName, locale, isDialogf);
+            }
+
+            const binary = buildSingleTlkBinaryFromColumn(rows, col.field, languageId);
+            await saveBytesToDisk(binary, outName, "application/octet-stream");
+            artifacts.push({
+              file: outName,
+              checksum: quickChecksumHex(binary)
+            });
+          }
+
+          state.built = true;
+          setBuildStatus("Status: Build completed. TLK/TLKF artifacts are ready.");
+          if (artifactBody) {
+            artifactBody.innerHTML = artifacts.map(item => (
+              `<tr><td>${escapeHtml(item.file)}</td><td class='status-ok'>Built</td><td>${escapeHtml(item.checksum)}</td></tr>`
+            )).join("");
+          }
+          kBlocking.textContent = "0";
+          kParity.textContent = "100%";
+          kRowsIssues.textContent = "0";
+          stamp("Round-trip complete: TLK artifacts rebuilt and saved to disk.");
+        } catch (error) {
+          stamp(error && error.message ? error.message : "Build failed.");
+          setBuildStatus("Status: Build failed.");
+        } finally {
+          state.building = false;
+          syncBuildControls();
+        }
+      });
+    }
+
+    if (btnExportQaBundle) {
+      btnExportQaBundle.addEventListener("click", async () => {
+        if (!state.built) return stamp("Build TLK first.");
+
+        const originalLabel = btnExportQaBundle.textContent;
+        btnExportQaBundle.disabled = true;
+        btnExportQaBundle.textContent = "Saving...";
+        try {
+          const bundle = buildQaBundlePayload();
+          const bytes = new TextEncoder().encode(JSON.stringify(bundle, null, 2));
+          const result = await saveBytesToDisk(bytes, makeQaBundleFileName(), "application/json");
+          stamp(`QA bundle saved (${result.method}): ${result.fileName}.`);
+        } catch (error) {
+          stamp("QA bundle export canceled or failed.");
+        } finally {
+          btnExportQaBundle.disabled = false;
+          btnExportQaBundle.textContent = originalLabel;
+        }
+      });
+    }
+
+    renderTlkBundles();
+    updateFileInfoLabels();
+    kCoverage.textContent = "0%";
+    kQa.textContent = "0";
+    kBlocking.textContent = "0";
+    kParity.textContent = "0%";
+    kRowsIssues.textContent = "0";
+    applyTheme(getInitialTheme());
+    initTabulatorGrid();
+    renderScope();
+    renderStep();
+    updateChangeTracking();
+    syncBuildControls();
+    syncPublishControls();
+    applyBackendGate();
+    renderToolHealth();
+    refreshBackendHealth();
+    window.setInterval(refreshBackendHealth, appSettings.backend.intervalMs);
+  </script>
+</body>
+</html>
+
+
