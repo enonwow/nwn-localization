@@ -19,9 +19,11 @@ import { applyDialogfFallbacks, validateTlkBundles } from "../../lib/validation"
 import {
   buildTlkRowsFromXlsxRows,
   getParsedLocaleColumnsFromRows,
+  hasCsvExportChanges,
   makeCsvFileName,
   parseWorkbookFile,
 } from "../../lib/xlsx";
+import { publishCsvToGitHub } from "../../lib/github";
 import { computeStepUiStates } from "../../lib/workflowProgress";
 import type { ImportMode, WorkflowScope, WorkflowStep } from "./types";
 
@@ -65,7 +67,7 @@ type CsvExportWorkerResponse =
     };
 
 const TLK_LOCALE_OPTIONS = ["EN", "PL", "DE", "FR", "ES", "IT", "PT-BR", "RU"];
-const DEFAULT_GITHUB_REPO = "enonwow/nwn-localization";
+const DEFAULT_GITHUB_REPO = "enonwow/nwn-localization-test";
 const DEFAULT_GITHUB_BASE_BRANCH = "main";
 const DEFAULT_GITHUB_CSV_FOLDER = "csv-latest";
 
@@ -106,6 +108,7 @@ const GITHUB_REPO = normalizeGithubRepoRef(import.meta.env.VITE_GITHUB_PR_REPO)
 const GITHUB_BASE_BRANCH = normalizeGithubPath(import.meta.env.VITE_GITHUB_BASE_BRANCH, DEFAULT_GITHUB_BASE_BRANCH);
 const GITHUB_CSV_FOLDER = normalizeGithubPath(import.meta.env.VITE_GITHUB_CSV_FOLDER, DEFAULT_GITHUB_CSV_FOLDER);
 const GITHUB_CSV_FOLDER_URL = `https://github.com/${GITHUB_REPO}/tree/${GITHUB_BASE_BRANCH}/${GITHUB_CSV_FOLDER}`;
+const GITHUB_PUBLIC_TEST_TOKEN = String(import.meta.env.VITE_GITHUB_PUBLIC_TOKEN || "").trim();
 
 const STEP_MAP: Record<WorkflowScope, WorkflowStep[]> = {
   exchange: [
@@ -359,6 +362,16 @@ const LocalizationWorkflow = () => {
     () => rows.filter((row) => String(row.status || "").toLowerCase() === "error").length,
     [rows],
   );
+  const hasPublishableChanges = useMemo(() => {
+    if (!sourceLoaded || rows.length === 0 || localeColumns.length === 0 || baselineRows.length === 0) {
+      return false;
+    }
+    return hasCsvExportChanges({
+      baselineRows,
+      currentRows: rows,
+      localeColumns,
+    });
+  }, [baselineRows, localeColumns, rows, sourceLoaded]);
 
   const resetFlowState = useCallback(() => {
     setRows([]);
@@ -846,7 +859,11 @@ const LocalizationWorkflow = () => {
     setStatusMessage("Export canceled.");
   }, [isExportingXlsx]);
 
-  const runCsvExport = useCallback(async (purpose: "generate" | "publish") => {
+  const runCsvExport = useCallback(async (
+    purpose: "generate" | "publish",
+    options?: { saveToDisk?: boolean },
+  ) => {
+    const shouldSaveToDisk = options?.saveToDisk ?? (purpose === "generate");
     const fileName = csvExportFileName || makeCsvFileName();
     setExportRunMode(purpose);
     setIsExportingXlsx(true);
@@ -869,7 +886,9 @@ const LocalizationWorkflow = () => {
       const exportedCsv = await task.promise;
       exportWorkerRef.current = null;
       exportCancelRef.current = null;
-      await saveBytesToDisk(exportedCsv.bytes, exportedCsv.fileName, "text/csv;charset=utf-8");
+      if (shouldSaveToDisk) {
+        await saveBytesToDisk(exportedCsv.bytes, exportedCsv.fileName, "text/csv;charset=utf-8");
+      }
       setLastExport(exportedCsv);
       setExported(true);
       setExportProgress(100);
@@ -896,7 +915,7 @@ const LocalizationWorkflow = () => {
       return;
     }
     try {
-      const exportedCsv = await runCsvExport("generate");
+      const exportedCsv = await runCsvExport("generate", { saveToDisk: true });
       if (!exportedCsv) return;
       setStatusMessage(`CSV generated: ${exportedCsv.fileName}. Ready to publish.`);
     } catch (error) {
@@ -909,23 +928,45 @@ const LocalizationWorkflow = () => {
       setStatusMessage("Validate grid before publish.");
       return;
     }
+    if (!hasPublishableChanges) {
+      setStatusMessage("No changes detected. Edit data before opening PR.");
+      return;
+    }
     if (isExportingXlsx) {
       setStatusMessage("CSV generation is still in progress.");
       return;
     }
 
     try {
+      let csvForPublish = lastExport;
       if (!exported || !lastExport) {
-        const exportedCsv = await runCsvExport("publish");
-        if (!exportedCsv) return;
+        const preparedCsv = await runCsvExport("publish", { saveToDisk: false });
+        if (!preparedCsv) return;
+        csvForPublish = preparedCsv;
       }
-      const generated = `https://github.com/${GITHUB_REPO}/pull/${Math.floor(Math.random() * 900) + 100}`;
-      setPrUrl(generated);
-      setStatusMessage(`Pull request request accepted (mock 200) for ${GITHUB_REPO}.`);
+      if (!csvForPublish) {
+        setStatusMessage("CSV payload missing for publish.");
+        return;
+      }
+      if (!GITHUB_PUBLIC_TEST_TOKEN) {
+        setStatusMessage("Missing VITE_GITHUB_PUBLIC_TOKEN for test-mode GitHub publish.");
+        return;
+      }
+
+      const published = await publishCsvToGitHub({
+        token: GITHUB_PUBLIC_TEST_TOKEN,
+        repoFullName: GITHUB_REPO,
+        baseBranch: GITHUB_BASE_BRANCH,
+        csvFolder: GITHUB_CSV_FOLDER,
+        fileName: csvForPublish.fileName,
+        csvBytes: csvForPublish.bytes,
+      });
+      setPrUrl(published.prUrl);
+      setStatusMessage(`PR created on ${GITHUB_REPO}: ${published.prUrl}`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
     }
-  }, [exported, isExportingXlsx, lastExport, runCsvExport, validated]);
+  }, [exported, hasPublishableChanges, isExportingXlsx, lastExport, runCsvExport, validated]);
 
   const onGenerateDiff = useCallback(() => {
     const diff = computeDiff({
@@ -1402,10 +1443,24 @@ const LocalizationWorkflow = () => {
                 </a>
               </p>
               <div className="workflow-actions">
-                <button type="button" className="workflow-actions__primary" onClick={onOpenPullRequest} disabled={!validated || isExportingXlsx}>
+                <button
+                  type="button"
+                  className="workflow-actions__primary"
+                  onClick={onOpenPullRequest}
+                  disabled={!validated || isExportingXlsx || !hasPublishableChanges || !GITHUB_PUBLIC_TEST_TOKEN}
+                >
                   Open PR
                 </button>
               </div>
+              {!GITHUB_PUBLIC_TEST_TOKEN ? (
+                <p className="workflow-screen__hint">Missing `VITE_GITHUB_PUBLIC_TOKEN` (test mode).</p>
+              ) : null}
+              {!lastExport ? (
+                <p className="workflow-screen__hint">CSV will be prepared automatically for PR (without local download).</p>
+              ) : null}
+              {!hasPublishableChanges ? (
+                <p className="workflow-screen__hint">No data changes detected yet. Open PR is disabled.</p>
+              ) : null}
               {prUrl && (
                 <p className="workflow-screen__hint">
                   PR URL: <a href={prUrl} target="_blank" rel="noreferrer">{prUrl}</a>

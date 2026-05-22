@@ -34,7 +34,7 @@
   - Edit grid with paging and undo/redo
   - Validate
   - Export CSV
-  - Publish path (PR mock + approved CSV import)
+  - Publish path (GitHub API: branch + commit CSV + open PR)
   - Rebuild TLK artifacts from loaded dataset
   - Diff report + JSON/Markdown export
 
@@ -50,12 +50,21 @@
 
 - Copy `projects/tlk-web/.env.example` to `projects/tlk-web/.env` and adjust if needed.
 - Configure Vite env vars in `projects/tlk-web/.env`:
-  - `VITE_GITHUB_PR_REPO=enonwow/nwn-localization`
+  - `VITE_GITHUB_PR_REPO=enonwow/nwn-localization-test`
   - `VITE_GITHUB_BASE_BRANCH=main`
   - `VITE_GITHUB_CSV_FOLDER=csv-latest`
+  - `VITE_GITHUB_PUBLIC_TOKEN=<fine-grained PAT>`
 - Alternative repo input is also supported:
   - `VITE_GITHUB_PR_REPO_URL=https://github.com/enonwow/nwn-localization/tree/main/csv-latest`
 - If env vars are missing, defaults are:
-  - repo: `enonwow/nwn-localization`
+  - repo: `enonwow/nwn-localization-test`
   - branch: `main`
   - folder: `csv-latest`
+- Required PAT permissions (fine-grained, selected repo only):
+  - `Contents: Read and write`
+  - `Pull requests: Read and write`
+  - `Metadata: Read-only`
+- GitHub Pages workflow:
+  - workflow file: `.github/workflows/deploy-pages.yml`
+  - set Actions secret in target repo:
+    - `NWN_TEST_GH_TOKEN=<fine-grained PAT>`

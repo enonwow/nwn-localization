@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { computeDiff, renderDiffMarkdown } from "../diff";
+import { publishCsvToGitHub } from "../github";
 import {
   buildRowsFromParsedTlkBundles,
   buildSingleTlkBinaryFromColumn,
@@ -27,6 +28,7 @@ import {
   buildTlkRowsFromXlsxRows,
   buildXlsxRowsForExport,
   getParsedLocaleColumnsFromRows,
+  hasCsvExportChanges,
   hasXlsxRuntime,
   localeColumnsFromXlsxColumns,
   makeCsvFileName,
@@ -278,6 +280,73 @@ describe("XLSX mapping and runtime", () => {
     expect(makeCsvFileName("bad:name?.tlk")).toBe("bad_name_.csv");
   });
 
+  it("detects publishable CSV changes based on source/locale values", () => {
+    const localeColumns: LocaleColumn[] = [
+      { field: "loc_en", title: "EN", locale: "EN", variant: "dialog" },
+      { field: "loc_pl", title: "PL", locale: "PL", variant: "dialog" },
+    ];
+    const baseline = makeGridRows();
+    const current = baseline.map((row) => ({ ...row }));
+    current[1].loc_pl = "Nowy tekst";
+
+    expect(
+      hasCsvExportChanges({
+        baselineRows: baseline,
+        currentRows: current,
+        localeColumns,
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores status-only updates for publishable CSV changes", () => {
+    const localeColumns: LocaleColumn[] = [{ field: "loc_en", title: "EN", locale: "EN", variant: "dialog" }];
+    const baseline = makeGridRows();
+    const current = baseline.map((row) => ({ ...row, status: "Validated" }));
+
+    expect(
+      hasCsvExportChanges({
+        baselineRows: baseline,
+        currentRows: current,
+        localeColumns,
+      }),
+    ).toBe(false);
+  });
+
+  it("treats row count mismatch as publishable change", () => {
+    const localeColumns: LocaleColumn[] = [{ field: "loc_en", title: "EN", locale: "EN", variant: "dialog" }];
+    const baseline = makeGridRows();
+    const current = baseline.slice(0, 1);
+
+    expect(
+      hasCsvExportChanges({
+        baselineRows: baseline,
+        currentRows: current,
+        localeColumns,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats newly added locale column as publishable change even when cells are empty", () => {
+    const baseline: TlkGridRow[] = [
+      { id: 0, strRef: 0, sourceEn: "Hello", context: "", status: "Draft", loc_en: "Hello" },
+    ];
+    const current: TlkGridRow[] = [
+      { id: 0, strRef: 0, sourceEn: "Hello", context: "", status: "Draft", loc_en: "Hello", loc_pl_xlsx: "" },
+    ];
+    const localeColumns: LocaleColumn[] = [
+      { field: "loc_en", title: "EN", locale: "EN", variant: "dialog" },
+      { field: "loc_pl_xlsx", title: "PL XLS", locale: "PL", variant: "xlsx-extra" },
+    ];
+
+    expect(
+      hasCsvExportChanges({
+        baselineRows: baseline,
+        currentRows: current,
+        localeColumns,
+      }),
+    ).toBe(true);
+  });
+
   it("detects runtime support", () => {
     expect(hasXlsxRuntime(undefined)).toBe(false);
     expect(
@@ -342,6 +411,81 @@ describe("XLSX mapping and runtime", () => {
 
     const noLocale = validateXlsxSchema([{ StrRef: 1, Source_EN: "A" }], "sheet");
     expect(noLocale.issues.some((i) => i.severity === "warning")).toBe(true);
+  });
+});
+
+describe("GitHub publish", () => {
+  it("rejects when token is missing", async () => {
+    await expect(
+      publishCsvToGitHub({
+        token: "",
+        repoFullName: "enonwow/nwn-localization-test",
+        baseBranch: "main",
+        csvFolder: "csv-latest",
+        fileName: "dialog_en.csv",
+        csvBytes: new TextEncoder().encode("A,B\r\n1,2"),
+      }),
+    ).rejects.toThrow("token");
+  });
+
+  it("rejects invalid repo format", async () => {
+    await expect(
+      publishCsvToGitHub({
+        token: "test-token",
+        repoFullName: "invalid-repo-name",
+        baseBranch: "main",
+        csvFolder: "csv-latest",
+        fileName: "dialog_en.csv",
+        csvBytes: new TextEncoder().encode("A,B\r\n1,2"),
+      }),
+    ).rejects.toThrow("owner/repo");
+  });
+
+  it("creates branch, commits CSV and opens PR via GitHub API", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = String(init?.method || "GET").toUpperCase();
+
+      if (url.endsWith("/git/ref/heads/main") && method === "GET") {
+        return new Response(JSON.stringify({ object: { sha: "base-sha-1" } }), { status: 200 });
+      }
+      if (url.endsWith("/git/refs") && method === "POST") {
+        return new Response(JSON.stringify({ ref: "refs/heads/tlk-forge/test" }), { status: 201 });
+      }
+      if (url.includes("/contents/csv-latest/dialog_en.csv") && method === "GET") {
+        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      }
+      if (url.includes("/contents/csv-latest/dialog_en.csv") && method === "PUT") {
+        return new Response(JSON.stringify({ commit: { sha: "commit-sha-1" } }), { status: 200 });
+      }
+      if (url.endsWith("/pulls") && method === "POST") {
+        return new Response(
+          JSON.stringify({ html_url: "https://github.com/enonwow/nwn-localization-test/pull/1" }),
+          { status: 201 },
+        );
+      }
+      return new Response(JSON.stringify({ message: `Unhandled ${method} ${url}` }), { status: 500 });
+    });
+
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const result = await publishCsvToGitHub({
+        token: "test-token",
+        repoFullName: "enonwow/nwn-localization-test",
+        baseBranch: "main",
+        csvFolder: "csv-latest",
+        fileName: "dialog_en.csv",
+        csvBytes: new TextEncoder().encode("A,B\r\n1,2"),
+      });
+
+      expect(result.prUrl).toBe("https://github.com/enonwow/nwn-localization-test/pull/1");
+      expect(result.commitSha).toBe("commit-sha-1");
+      expect(result.filePath).toBe("csv-latest/dialog_en.csv");
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    } finally {
+      (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+    }
   });
 });
 

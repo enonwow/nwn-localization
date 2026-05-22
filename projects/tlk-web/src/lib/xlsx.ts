@@ -157,6 +157,53 @@ export function buildXlsxAoaForExport(
   return result;
 }
 
+export interface CsvExportChangeInput {
+  baselineRows: readonly TlkGridRow[];
+  currentRows: readonly TlkGridRow[];
+  localeColumns: readonly LocaleColumn[];
+}
+
+export function hasCsvExportChanges(input: CsvExportChangeInput): boolean {
+  if (input.baselineRows.length !== input.currentRows.length) {
+    return true;
+  }
+
+  const baselineByStrRef = new Map<number, TlkGridRow>();
+  for (let i = 0; i < input.baselineRows.length; i += 1) {
+    const row = input.baselineRows[i];
+    baselineByStrRef.set(Number(row.strRef), row);
+  }
+
+  for (let i = 0; i < input.currentRows.length; i += 1) {
+    const currentRow = input.currentRows[i];
+    const strRef = Number(currentRow.strRef);
+    const baselineRow = baselineByStrRef.get(strRef);
+    if (!baselineRow) {
+      return true;
+    }
+
+    if (sanitizeSheetCell(currentRow.sourceEn) !== sanitizeSheetCell(baselineRow.sourceEn)) {
+      return true;
+    }
+
+    for (let j = 0; j < input.localeColumns.length; j += 1) {
+      const col = input.localeColumns[j];
+      const currentHasField = Object.prototype.hasOwnProperty.call(currentRow, col.field);
+      const baselineHasField = Object.prototype.hasOwnProperty.call(baselineRow, col.field);
+      if (currentHasField !== baselineHasField) {
+        return true;
+      }
+      if (sanitizeSheetCell(currentRow[col.field]) !== sanitizeSheetCell(baselineRow[col.field])) {
+        return true;
+      }
+    }
+
+    baselineByStrRef.delete(strRef);
+  }
+
+  return baselineByStrRef.size > 0;
+}
+
 export function makeXlsxFileName(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `localization_sheet_v4_${timestamp}.xlsx`;
