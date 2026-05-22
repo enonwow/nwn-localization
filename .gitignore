@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+coverage/
+*.log
+projects/tlk-web/.stryker-tmp/
+projects/tlk-web/_tmp/
+projects/tlk-web/reports/
+projects/tlk-web/tmp-check.js
