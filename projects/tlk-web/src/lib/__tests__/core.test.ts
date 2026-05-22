@@ -271,7 +271,11 @@ describe("XLSX mapping and runtime", () => {
   it("sanitizes and names XLSX helpers", () => {
     expect(sanitizeXlsxCell("A\r\nB")).toBe("A\nB");
     expect(makeXlsxFileName()).toMatch(/^localization_sheet_v4_.*\.xlsx$/);
-    expect(makeCsvFileName()).toMatch(/^localization_sheet_v4_.*\.csv$/);
+    expect(makeCsvFileName()).toBe("latest-localization.csv");
+    expect(makeCsvFileName("dialog_en.tlk")).toBe("dialog_en.csv");
+    expect(makeCsvFileName("C:\\packs\\dialog_pl.tlk")).toBe("dialog_pl.csv");
+    expect(makeCsvFileName("custom sheet.xlsx")).toBe("custom sheet.csv");
+    expect(makeCsvFileName("bad:name?.tlk")).toBe("bad_name_.csv");
   });
 
   it("detects runtime support", () => {

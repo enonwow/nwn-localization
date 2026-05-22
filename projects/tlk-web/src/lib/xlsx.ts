@@ -162,9 +162,24 @@ export function makeXlsxFileName(): string {
   return `localization_sheet_v4_${timestamp}.xlsx`;
 }
 
-export function makeCsvFileName(): string {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `localization_sheet_v4_${timestamp}.csv`;
+function basenameFromPath(value: string): string {
+  const normalized = value.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+}
+
+export function makeCsvFileName(sourceName?: string): string {
+  const fallback = "latest-localization.csv";
+  const raw = String(sourceName || "").trim();
+  if (!raw) return fallback;
+
+  const fileName = basenameFromPath(raw);
+  const stem = fileName.replace(/\.[^.]+$/, "").trim();
+  if (!stem) return fallback;
+
+  const safeStem = stem.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_");
+  if (!safeStem) return fallback;
+  return `${safeStem}.csv`;
 }
 
 export function hasXlsxRuntime(xlsx: XlsxRuntime | undefined): xlsx is XlsxRuntime {

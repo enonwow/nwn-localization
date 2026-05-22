@@ -270,6 +270,7 @@ const LocalizationWorkflow = () => {
   const [exportProgressLabel, setExportProgressLabel] = useState("");
   const [lastExport, setLastExport] = useState<{ fileName: string; bytes: Uint8Array } | null>(null);
   const [exportRunMode, setExportRunMode] = useState<"generate" | "publish">("generate");
+  const [csvExportFileName, setCsvExportFileName] = useState("latest-localization.csv");
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
   const [gridApi, setGridApi] = useState<GridApi<TlkGridRow> | null>(null);
@@ -340,6 +341,7 @@ const LocalizationWorkflow = () => {
     setExportProgress(0);
     setExportProgressLabel("");
     setLastExport(null);
+    setCsvExportFileName("latest-localization.csv");
     setActiveDropKey(null);
   }, []);
 
@@ -706,6 +708,8 @@ const LocalizationWorkflow = () => {
 
     const effectiveColumns = buildEffectiveLocaleColumns(fallback.bundles, normalizedExtraLocales);
     const builtRows = buildRowsFromParsedTlkBundles(parsedBundles, effectiveColumns);
+    const primarySourceName = parsedBundles[0]?.parsed.fileName || fallback.bundles[0]?.dialog || "";
+    setCsvExportFileName(makeCsvFileName(primarySourceName));
     setLocaleColumns(effectiveColumns);
     setRows(cloneRows(builtRows));
     setBaselineRows(cloneRows(builtRows));
@@ -730,6 +734,7 @@ const LocalizationWorkflow = () => {
         return false;
       }
       const parsedColumns = getParsedLocaleColumnsFromRows(builtRows);
+      setCsvExportFileName(makeCsvFileName(file.name));
       setLocaleColumns(parsedColumns);
       setRows(cloneRows(builtRows));
       setBaselineRows(cloneRows(builtRows));
@@ -801,7 +806,7 @@ const LocalizationWorkflow = () => {
   }, [isExportingXlsx]);
 
   const runCsvExport = useCallback(async (purpose: "generate" | "publish") => {
-    const fileName = makeCsvFileName();
+    const fileName = csvExportFileName || makeCsvFileName();
     setExportRunMode(purpose);
     setIsExportingXlsx(true);
     setExportProgress(0);
@@ -839,7 +844,7 @@ const LocalizationWorkflow = () => {
       setExportProgress(0);
       setExportProgressLabel("");
     }
-  }, [localeColumns, rows]);
+  }, [csvExportFileName, localeColumns, rows]);
 
   const onExportXlsx = useCallback(async () => {
     if (!validated) {
@@ -1338,44 +1343,51 @@ const LocalizationWorkflow = () => {
       {scope === "exchange" && activeStepIndex === 2 && (
         <section className="workflow-screen">
           <header className="workflow-screen__header">
-            <h2>3) Publish (CSV + GitHub PR)</h2>
-            <p>Generate CSV and then open PR. PR can auto-generate CSV when missing.</p>
+            <h2>3) Publish</h2>
           </header>
-          <article className="card">
-            <h3>Export + GitHub</h3>
-            <div className="workflow-actions">
-              <button type="button" className="workflow-actions__primary" onClick={onExportXlsx} disabled={!validated || isExportingXlsx}>
-                {isExportingXlsx && exportRunMode === "generate" ? "Generating CSV..." : "Generate CSV"}
-              </button>
-              <button type="button" className="workflow-actions__secondary" onClick={onOpenPullRequest} disabled={!validated || isExportingXlsx}>
-                Open Pull Request
-              </button>
-              {isExportingXlsx ? (
-                <button type="button" className="workflow-actions__secondary" onClick={onCancelExport}>
-                  Cancel
+          <div className="grid-2">
+            <article className="card">
+              <h3>GitHub PR</h3>
+              <div className="workflow-actions">
+                <button type="button" className="workflow-actions__primary" onClick={onOpenPullRequest} disabled={!validated || isExportingXlsx}>
+                  Open PR
                 </button>
-              ) : null}
-            </div>
-            {isExportingXlsx ? (
-              <div className="workflow-inline-progress" role="status" aria-live="polite">
-                <span className="workflow-inline-progress__label">
-                  <span className="workflow-inline-progress__spinner" aria-hidden="true" />
-                  {`${
-                    exportRunMode === "publish" ? "Preparing CSV for PR..." : "Generating CSV..."
-                  } ${exportProgressLabel || `${exportProgress}%`}`}
-                </span>
-                <div className="workflow-inline-progress__bar" aria-hidden="true">
-                  <span style={{ width: `${Math.max(0, Math.min(100, exportProgress))}%` }} />
-                </div>
               </div>
-            ) : null}
-            {lastExport ? <p className="workflow-screen__hint">{`Last CSV: ${lastExport.fileName}`}</p> : null}
-            {prUrl && (
-              <p className="workflow-screen__hint">
-                PR URL: <a href={prUrl} target="_blank" rel="noreferrer">{prUrl}</a>
-              </p>
-            )}
-          </article>
+              {prUrl && (
+                <p className="workflow-screen__hint">
+                  PR URL: <a href={prUrl} target="_blank" rel="noreferrer">{prUrl}</a>
+                </p>
+              )}
+            </article>
+            <article className="card">
+              <h3>Export CSV</h3>
+              <p className="workflow-screen__hint">{`Target CSV: ${csvExportFileName}`}</p>
+              <div className="workflow-actions">
+                <button type="button" className="workflow-actions__primary" onClick={onExportXlsx} disabled={!validated || isExportingXlsx}>
+                  {isExportingXlsx && exportRunMode === "generate" ? "Generating CSV..." : "Generate CSV"}
+                </button>
+                {isExportingXlsx ? (
+                  <button type="button" className="workflow-actions__secondary" onClick={onCancelExport}>
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+              {isExportingXlsx ? (
+                <div className="workflow-inline-progress" role="status" aria-live="polite">
+                  <span className="workflow-inline-progress__label">
+                    <span className="workflow-inline-progress__spinner" aria-hidden="true" />
+                    {`${
+                      exportRunMode === "publish" ? "Preparing CSV for PR..." : "Generating CSV..."
+                    } ${exportProgressLabel || `${exportProgress}%`}`}
+                  </span>
+                  <div className="workflow-inline-progress__bar" aria-hidden="true">
+                    <span style={{ width: `${Math.max(0, Math.min(100, exportProgress))}%` }} />
+                  </div>
+                </div>
+              ) : null}
+              {lastExport ? <p className="workflow-screen__hint">{`Last CSV: ${lastExport.fileName}`}</p> : null}
+            </article>
+          </div>
         </section>
       )}
 
