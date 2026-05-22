@@ -317,10 +317,32 @@ const LocalizationWorkflow = () => {
   const [csvExportFileName, setCsvExportFileName] = useState("latest-localization.csv");
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
+  const [githubRuntimeToken, setGithubRuntimeToken] = useState(() => {
+    if (GITHUB_PUBLIC_TEST_TOKEN) return GITHUB_PUBLIC_TEST_TOKEN;
+    try {
+      return String(window.sessionStorage.getItem("tlkForgeGitHubToken") || "").trim();
+    } catch {
+      return "";
+    }
+  });
   const [gridApi, setGridApi] = useState<GridApi<TlkGridRow> | null>(null);
   const exportWorkerRef = useRef<Worker | null>(null);
   const exportCancelRef = useRef<(() => void) | null>(null);
   const bundleInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const githubToken = String(githubRuntimeToken || "").trim();
+  const onGithubTokenChange = useCallback((nextValue: string) => {
+    setGithubRuntimeToken(nextValue);
+    try {
+      const normalized = String(nextValue || "").trim();
+      if (normalized) {
+        window.sessionStorage.setItem("tlkForgeGitHubToken", normalized);
+      } else {
+        window.sessionStorage.removeItem("tlkForgeGitHubToken");
+      }
+    } catch {
+      // ignore sessionStorage failures
+    }
+  }, []);
 
   const steps = STEP_MAP[scope];
   const loadedLocaleColumns = useMemo(() => buildLoadedLocaleColumns(tlkBundles), [tlkBundles]);
@@ -948,13 +970,13 @@ const LocalizationWorkflow = () => {
         setStatusMessage("CSV payload missing for publish.");
         return;
       }
-      if (!GITHUB_PUBLIC_TEST_TOKEN) {
-        setStatusMessage("Missing VITE_GITHUB_PUBLIC_TOKEN for test-mode GitHub publish.");
+      if (!githubToken) {
+        setStatusMessage("Missing GitHub PAT token.");
         return;
       }
 
       const published = await publishCsvToGitHub({
-        token: GITHUB_PUBLIC_TEST_TOKEN,
+        token: githubToken,
         repoFullName: GITHUB_REPO,
         baseBranch: GITHUB_BASE_BRANCH,
         csvFolder: GITHUB_CSV_FOLDER,
@@ -966,7 +988,7 @@ const LocalizationWorkflow = () => {
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
     }
-  }, [exported, hasPublishableChanges, isExportingXlsx, lastExport, runCsvExport, validated]);
+  }, [exported, githubToken, hasPublishableChanges, isExportingXlsx, lastExport, runCsvExport, validated]);
 
   const onGenerateDiff = useCallback(() => {
     const diff = computeDiff({
@@ -1430,6 +1452,21 @@ const LocalizationWorkflow = () => {
           <div className="grid-2">
             <article className="card">
               <h3>GitHub PR</h3>
+              <div className="workflow-screen__field">
+                <label htmlFor="github-pat-token">GitHub PAT (test)</label>
+                <input
+                  id="github-pat-token"
+                  type="password"
+                  placeholder="github_pat_..."
+                  value={githubRuntimeToken}
+                  onChange={(event) => onGithubTokenChange(event.target.value)}
+                />
+              </div>
+              <div className="workflow-actions">
+                <button type="button" className="workflow-actions__secondary" onClick={() => onGithubTokenChange("")}>
+                  Clear PAT
+                </button>
+              </div>
               <p className="workflow-screen__hint">
                 Target repo:{" "}
                 <a href={`https://github.com/${GITHUB_REPO}`} target="_blank" rel="noreferrer">
@@ -1447,13 +1484,13 @@ const LocalizationWorkflow = () => {
                   type="button"
                   className="workflow-actions__primary"
                   onClick={onOpenPullRequest}
-                  disabled={!validated || isExportingXlsx || !hasPublishableChanges || !GITHUB_PUBLIC_TEST_TOKEN}
+                  disabled={!validated || isExportingXlsx || !hasPublishableChanges || !githubToken}
                 >
                   Open PR
                 </button>
               </div>
-              {!GITHUB_PUBLIC_TEST_TOKEN ? (
-                <p className="workflow-screen__hint">Missing `VITE_GITHUB_PUBLIC_TOKEN` (test mode).</p>
+              {!githubToken ? (
+                <p className="workflow-screen__hint">Paste GitHub PAT to enable Open PR.</p>
               ) : null}
               {!lastExport ? (
                 <p className="workflow-screen__hint">CSV will be prepared automatically for PR (without local download).</p>
@@ -1583,7 +1620,3 @@ const LocalizationWorkflow = () => {
 };
 
 export default LocalizationWorkflow;
-
-
-
-

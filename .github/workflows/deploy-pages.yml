@@ -42,7 +42,6 @@ jobs:
           VITE_GITHUB_PR_REPO: enonwow/nwn-localization-test
           VITE_GITHUB_BASE_BRANCH: main
           VITE_GITHUB_CSV_FOLDER: csv-latest
-          VITE_GITHUB_PUBLIC_TOKEN: ${{ secrets.NWN_TEST_GH_TOKEN }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -59,4 +58,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

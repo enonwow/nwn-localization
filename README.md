@@ -53,7 +53,7 @@
   - `VITE_GITHUB_PR_REPO=enonwow/nwn-localization-test`
   - `VITE_GITHUB_BASE_BRANCH=main`
   - `VITE_GITHUB_CSV_FOLDER=csv-latest`
-  - `VITE_GITHUB_PUBLIC_TOKEN=<fine-grained PAT>`
+  - `VITE_GITHUB_PUBLIC_TOKEN=` (optional local fallback only)
 - Alternative repo input is also supported:
   - `VITE_GITHUB_PR_REPO_URL=https://github.com/enonwow/nwn-localization/tree/main/csv-latest`
 - If env vars are missing, defaults are:
@@ -64,7 +64,6 @@
   - `Contents: Read and write`
   - `Pull requests: Read and write`
   - `Metadata: Read-only`
-- GitHub Pages workflow:
+- GitHub Pages runtime:
+  - user pastes PAT in Publish screen (`GitHub PAT (test)`), stored only in browser session.
   - workflow file: `.github/workflows/deploy-pages.yml`
-  - set Actions secret in target repo:
-    - `NWN_TEST_GH_TOKEN=<fine-grained PAT>`
