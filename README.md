@@ -45,3 +45,17 @@
 - Test: `npm test`
 - Dev: `npm run dev`
 - Build: `npm run build`
+
+## Publish Target Config (GitHub PR + CSV folder)
+
+- Copy `projects/tlk-web/.env.example` to `projects/tlk-web/.env` and adjust if needed.
+- Configure Vite env vars in `projects/tlk-web/.env`:
+  - `VITE_GITHUB_PR_REPO=enonwow/nwn-localization`
+  - `VITE_GITHUB_BASE_BRANCH=main`
+  - `VITE_GITHUB_CSV_FOLDER=csv-latest`
+- Alternative repo input is also supported:
+  - `VITE_GITHUB_PR_REPO_URL=https://github.com/enonwow/nwn-localization/tree/main/csv-latest`
+- If env vars are missing, defaults are:
+  - repo: `enonwow/nwn-localization`
+  - branch: `main`
+  - folder: `csv-latest`

@@ -65,6 +65,47 @@ type CsvExportWorkerResponse =
     };
 
 const TLK_LOCALE_OPTIONS = ["EN", "PL", "DE", "FR", "ES", "IT", "PT-BR", "RU"];
+const DEFAULT_GITHUB_REPO = "enonwow/nwn-localization";
+const DEFAULT_GITHUB_BASE_BRANCH = "main";
+const DEFAULT_GITHUB_CSV_FOLDER = "csv-latest";
+
+function normalizeGithubRepoRef(value: string | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0]}/${parts[1].replace(/\.git$/i, "")}`;
+      }
+      return "";
+    } catch {
+      return "";
+    }
+  }
+
+  const normalized = raw
+    .replace(/^github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  return `${parts[0]}/${parts[1]}`;
+}
+
+function normalizeGithubPath(value: string | undefined, fallback: string): string {
+  const normalized = String(value || "").trim().replace(/^\/+|\/+$/g, "");
+  return normalized || fallback;
+}
+
+const GITHUB_REPO = normalizeGithubRepoRef(import.meta.env.VITE_GITHUB_PR_REPO)
+  || normalizeGithubRepoRef(import.meta.env.VITE_GITHUB_PR_REPO_URL)
+  || DEFAULT_GITHUB_REPO;
+const GITHUB_BASE_BRANCH = normalizeGithubPath(import.meta.env.VITE_GITHUB_BASE_BRANCH, DEFAULT_GITHUB_BASE_BRANCH);
+const GITHUB_CSV_FOLDER = normalizeGithubPath(import.meta.env.VITE_GITHUB_CSV_FOLDER, DEFAULT_GITHUB_CSV_FOLDER);
+const GITHUB_CSV_FOLDER_URL = `https://github.com/${GITHUB_REPO}/tree/${GITHUB_BASE_BRANCH}/${GITHUB_CSV_FOLDER}`;
 
 const STEP_MAP: Record<WorkflowScope, WorkflowStep[]> = {
   exchange: [
@@ -878,9 +919,9 @@ const LocalizationWorkflow = () => {
         const exportedCsv = await runCsvExport("publish");
         if (!exportedCsv) return;
       }
-      const generated = `https://github.com/nwn-localization/tlk-community-sheet/pull/${Math.floor(Math.random() * 900) + 100}`;
+      const generated = `https://github.com/${GITHUB_REPO}/pull/${Math.floor(Math.random() * 900) + 100}`;
       setPrUrl(generated);
-      setStatusMessage("Pull request request accepted (mock 200).");
+      setStatusMessage(`Pull request request accepted (mock 200) for ${GITHUB_REPO}.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
     }
@@ -1348,6 +1389,18 @@ const LocalizationWorkflow = () => {
           <div className="grid-2">
             <article className="card">
               <h3>GitHub PR</h3>
+              <p className="workflow-screen__hint">
+                Target repo:{" "}
+                <a href={`https://github.com/${GITHUB_REPO}`} target="_blank" rel="noreferrer">
+                  {GITHUB_REPO}
+                </a>
+              </p>
+              <p className="workflow-screen__hint">
+                CSV folder:{" "}
+                <a href={GITHUB_CSV_FOLDER_URL} target="_blank" rel="noreferrer">
+                  {`${GITHUB_BASE_BRANCH}/${GITHUB_CSV_FOLDER}`}
+                </a>
+              </p>
               <div className="workflow-actions">
                 <button type="button" className="workflow-actions__primary" onClick={onOpenPullRequest} disabled={!validated || isExportingXlsx}>
                   Open PR
