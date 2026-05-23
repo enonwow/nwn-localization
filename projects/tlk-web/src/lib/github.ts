@@ -14,6 +14,19 @@ export interface GitHubPublishCsvResult {
   commitSha: string;
 }
 
+export interface GitHubFetchRepoFileInput {
+  token?: string;
+  repoFullName: string;
+  branch: string;
+  filePath: string;
+}
+
+export interface GitHubFetchRepoFileResult {
+  fileName: string;
+  filePath: string;
+  bytes: ArrayBuffer;
+}
+
 interface GitHubApiErrorPayload {
   message?: string;
   errors?: Array<{ message?: string } | string>;
@@ -83,10 +96,12 @@ function sanitizeBranchToken(value: string): string {
   return token || "csv";
 }
 
-async function githubRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+async function githubRequest<T>(path: string, token: string | undefined, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers || {});
   headers.set("Accept", "application/vnd.github+json");
-  headers.set("Authorization", `Bearer ${token}`);
+  if (String(token || "").trim()) {
+    headers.set("Authorization", `Bearer ${String(token || "").trim()}`);
+  }
   headers.set("X-GitHub-Api-Version", "2022-11-28");
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -114,6 +129,64 @@ async function githubRequest<T>(path: string, token: string, init?: RequestInit)
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+export async function fetchRepoFileFromGitHub(input: GitHubFetchRepoFileInput): Promise<GitHubFetchRepoFileResult> {
+  const { owner, repo } = repoParts(input.repoFullName);
+  const branch = normalizePath(input.branch) || "main";
+  const filePath = normalizePath(input.filePath);
+  if (!filePath) {
+    throw new Error("Repository file path is missing.");
+  }
+
+  const encodedPath = filePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  const headers = new Headers();
+  headers.set("Accept", "application/vnd.github.raw");
+  headers.set("X-GitHub-Api-Version", "2022-11-28");
+  const token = String(input.token || "").trim();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(
+    `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`,
+    {
+      method: "GET",
+      headers,
+    },
+  );
+
+  if (!response.ok) {
+    let message = `GitHub API ${response.status}`;
+    try {
+      const payload = (await response.json()) as GitHubApiErrorPayload;
+      const nestedErrors = Array.isArray(payload.errors)
+        ? payload.errors
+          .map((item) => (typeof item === "string" ? item : item?.message || ""))
+          .filter(Boolean)
+          .join("; ")
+        : "";
+      message = [payload.message, nestedErrors].filter(Boolean).join(" | ") || message;
+    } catch {
+      try {
+        const fallbackText = await response.text();
+        if (fallbackText.trim()) {
+          message = `${message}: ${fallbackText.trim()}`;
+        }
+      } catch {
+        // keep fallback message
+      }
+    }
+    throw new Error(message);
+  }
+
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error("Repository file is empty.");
+  }
+
+  const fileName = filePath.split("/").filter(Boolean).pop() || "source.csv";
+  return { fileName, filePath, bytes };
 }
 
 async function getContentSha(
@@ -224,4 +297,3 @@ export async function publishCsvToGitHub(input: GitHubPublishCsvInput): Promise<
     commitSha: updatePayload.commit.sha,
   };
 }
-

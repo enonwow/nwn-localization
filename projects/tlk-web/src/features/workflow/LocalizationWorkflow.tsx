@@ -5,16 +5,15 @@ import * as XLSX from "xlsx";
 import ScopeSwitcher from "../../components/ScopeSwitcher";
 import StepStrip from "../../components/StepStrip";
 import LocalizationGrid from "../../components/LocalizationGrid";
-import { computeDiff, renderDiffMarkdown } from "../../lib/diff";
 import {
   buildRowsFromParsedTlkBundles,
   buildSingleTlkBinaryFromColumn,
-  makeTlkFileName,
   parseSingleTlkBuffer,
   quickChecksumHex,
+  safeFileNameFromPath,
   TLK_LOCALE_TO_LANGUAGE_ID,
 } from "../../lib/tlk";
-import { localeCodeToFieldToken, normalizeLocaleCode, type LocaleColumn, type ParsedTlkBundle, type TlkBundleConfig, type TlkGridRow, type TlkDiffReport } from "../../lib/types";
+import { localeCodeToFieldToken, normalizeLocaleCode, type LocaleColumn, type ParsedTlkBundle, type TlkBundleConfig, type TlkGridRow } from "../../lib/types";
 import { applyDialogfFallbacks, validateTlkBundles } from "../../lib/validation";
 import {
   buildTlkRowsFromXlsxRows,
@@ -23,13 +22,17 @@ import {
   makeCsvFileName,
   parseWorkbookFile,
 } from "../../lib/xlsx";
-import { publishCsvToGitHub } from "../../lib/github";
+import { fetchRepoFileFromGitHub, publishCsvToGitHub } from "../../lib/github";
+import { buildZipArchive } from "../../lib/zip";
 import { computeStepUiStates } from "../../lib/workflowProgress";
 import type { ImportMode, WorkflowScope, WorkflowStep } from "./types";
 
 type ArtifactRow = {
   file: string;
   checksum: string;
+  bytes: Uint8Array;
+  locale: string;
+  isDialogf: boolean;
 };
 
 type ValidationFeedback = {
@@ -233,6 +236,7 @@ function createCsvExportTask(
   rows: TlkGridRow[],
   localeColumns: LocaleColumn[],
   fileName: string,
+  lineEnding: "lf" | "crlf",
   onProgress?: (payload: { doneRows: number; totalRows: number; progress: number }) => void,
 ) {
   const worker = new Worker(new URL("../../workers/csvExportWorker.ts", import.meta.url), { type: "module" });
@@ -264,7 +268,7 @@ function createCsvExportTask(
     };
   });
 
-  worker.postMessage({ rows, localeColumns, fileName });
+  worker.postMessage({ rows, localeColumns, fileName, lineEnding });
   const cancel = () => {
     if (isSettled) return;
     isSettled = true;
@@ -286,6 +290,60 @@ function bundleIdKey(id: number | string | undefined): string {
   return String(id ?? "");
 }
 
+function isCsvLikeFileName(name: string | undefined): boolean {
+  return /\.csv$/i.test(String(name || "").trim());
+}
+
+function isSpreadsheetSourceFile(file: File): boolean {
+  return /\.(csv|xlsx|xlsm|xls)$/i.test(String(file?.name || "").trim());
+}
+
+function makeSafeDownloadStem(rawValue: string, fallback: string): string {
+  const trimmed = String(rawValue || "").trim();
+  if (!trimmed) return fallback;
+  const sanitized = trimmed
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/gu, "_")
+    .trim();
+  return sanitized || fallback;
+}
+
+function makeRebuildZipName(sourceName: string): string {
+  const fileName = safeFileNameFromPath(sourceName);
+  const stem = makeSafeDownloadStem(fileName, "localization");
+  return `${stem}.zip`;
+}
+
+function makeRebuildArtifactName(locale: string, isDialogf: boolean): string {
+  const token = localeCodeToFieldToken(locale).replace(/_/g, "-");
+  const stem = isDialogf ? "dialogf" : "dialog";
+  return `${stem}_${token}.tlk`;
+}
+
+function makeZipLocaleFolder(locale: string): string {
+  return localeCodeToFieldToken(locale).replace(/_/g, "-");
+}
+
+function makeZipArtifactPath(rootStem: string, locale: string, isDialogf: boolean): string {
+  const folder = makeZipLocaleFolder(locale);
+  const file = isDialogf ? "dialogf.tlk" : "dialog.tlk";
+  return `${rootStem}/${folder}/${file}`;
+}
+
+async function detectCsvLineEnding(file: File): Promise<"lf" | "crlf"> {
+  if (!isCsvLikeFileName(file?.name)) {
+    return "lf";
+  }
+  try {
+    const probeSize = Math.min(file.size, 1024 * 1024);
+    const probeBuffer = await file.slice(0, probeSize).arrayBuffer();
+    const probeText = new TextDecoder().decode(probeBuffer);
+    return probeText.includes("\r\n") ? "crlf" : "lf";
+  } catch {
+    return "lf";
+  }
+}
+
 const LocalizationWorkflow = () => {
   const [scope, setScope] = useState<WorkflowScope>("exchange");
   const [stepIndex, setStepIndex] = useState(0);
@@ -296,6 +354,8 @@ const LocalizationWorkflow = () => {
   const [extraXlsxLocales, setExtraXlsxLocales] = useState<string[]>([]);
   const [sourceXlsxFile, setSourceXlsxFile] = useState<File | null>(null);
   const [mergedXlsxFile, setMergedXlsxFile] = useState<File | null>(null);
+  const [repoImportBranch, setRepoImportBranch] = useState(GITHUB_BASE_BRANCH);
+  const [repoImportPath, setRepoImportPath] = useState(`${GITHUB_CSV_FOLDER}/latest-localization.csv`);
   const [rows, setRows] = useState<TlkGridRow[]>([]);
   const [baselineRows, setBaselineRows] = useState<TlkGridRow[]>([]);
   const [localeColumns, setLocaleColumns] = useState<LocaleColumn[]>([]);
@@ -304,17 +364,20 @@ const LocalizationWorkflow = () => {
   const [exported, setExported] = useState(false);
   const [imported, setImported] = useState(false);
   const [built, setBuilt] = useState(false);
-  const [diffReport, setDiffReport] = useState<TlkDiffReport | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactRow[]>([]);
   const [pageSize, setPageSize] = useState(25);
   const [, setStatusMessage] = useState("Ready. Aurora-first workflow is active.");
   const [validationFeedback, setValidationFeedback] = useState<ValidationFeedback | null>(null);
+  const [isLoadingSource, setIsLoadingSource] = useState(false);
+  const [loadSourceLabel, setLoadSourceLabel] = useState("");
+  const [loadSourceError, setLoadSourceError] = useState("");
   const [isExportingXlsx, setIsExportingXlsx] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportProgressLabel, setExportProgressLabel] = useState("");
   const [lastExport, setLastExport] = useState<{ fileName: string; bytes: Uint8Array } | null>(null);
   const [exportRunMode, setExportRunMode] = useState<"generate" | "publish">("generate");
   const [csvExportFileName, setCsvExportFileName] = useState("latest-localization.csv");
+  const [csvLineEnding, setCsvLineEnding] = useState<"lf" | "crlf">("lf");
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
   const [githubRuntimeToken, setGithubRuntimeToken] = useState(() => {
@@ -343,6 +406,126 @@ const LocalizationWorkflow = () => {
       // ignore sessionStorage failures
     }
   }, []);
+
+  const onCsvPickerDragOver = useCallback((event: React.DragEvent<HTMLElement>, dropKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (activeDropKey !== dropKey) {
+      setActiveDropKey(dropKey);
+    }
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }, [activeDropKey]);
+
+  const onCsvPickerDragLeave = useCallback((event: React.DragEvent<HTMLElement>, dropKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveDropKey((prev) => (prev === dropKey ? null : prev));
+  }, []);
+
+  const onCsvPickerDrop = useCallback((
+    event: React.DragEvent<HTMLElement>,
+    dropKey: string,
+    onFileChange: (file: File | null) => void,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveDropKey((prev) => (prev === dropKey ? null : prev));
+
+    const files = event.dataTransfer?.files;
+    if (!files || files.length === 0) {
+      setStatusMessage("No file dropped.");
+      return;
+    }
+
+    const file = files[0];
+    if (!isSpreadsheetSourceFile(file)) {
+      setStatusMessage("Drop a CSV/XLSX file.");
+      return;
+    }
+
+    onFileChange(file);
+    if (files.length > 1) {
+      setStatusMessage(`Multiple files dropped, using first: ${file.name}`);
+      return;
+    }
+    setStatusMessage(`Loaded from drop: ${file.name}`);
+  }, []);
+
+  const renderRepoSourceFields = useCallback(() => (
+    <>
+      <div className="workflow-screen__field">
+        <label htmlFor="repo-branch">Repository branch</label>
+        <input
+          id="repo-branch"
+          type="text"
+          value={repoImportBranch}
+          onChange={(event) => setRepoImportBranch(event.target.value)}
+          placeholder={GITHUB_BASE_BRANCH}
+        />
+      </div>
+      <div className="workflow-screen__field">
+        <label htmlFor="repo-path">Repository CSV path</label>
+        <input
+          id="repo-path"
+          type="text"
+          value={repoImportPath}
+          onChange={(event) => setRepoImportPath(event.target.value)}
+          placeholder={`${GITHUB_CSV_FOLDER}/${csvExportFileName}`}
+        />
+      </div>
+      <div className="workflow-screen__field">
+        <label htmlFor="repo-token">GitHub PAT (optional for public repo)</label>
+        <input
+          id="repo-token"
+          type="password"
+          placeholder="github_pat_..."
+          value={githubRuntimeToken}
+          onChange={(event) => onGithubTokenChange(event.target.value)}
+        />
+      </div>
+      <p className="workflow-screen__hint">
+        Loads CSV from <code>{GITHUB_REPO}</code> using branch + path.
+      </p>
+    </>
+  ), [csvExportFileName, githubRuntimeToken, onGithubTokenChange, repoImportBranch, repoImportPath]);
+
+  const renderCsvModelFilePicker = useCallback(
+    (options: {
+      inputId: string;
+      selectedFile: File | null;
+      onFileChange: (file: File | null) => void;
+    }) => {
+      const dropKey = `csv:${options.inputId}`;
+      return (
+      <div className="workflow-screen__field">
+        <label
+          className={`bundle-file-picker bundle-file-picker--csv${activeDropKey === dropKey ? " bundle-file-picker--drag-over" : ""}`}
+          onDragOver={(event) => onCsvPickerDragOver(event, dropKey)}
+          onDragLeave={(event) => onCsvPickerDragLeave(event, dropKey)}
+          onDrop={(event) => onCsvPickerDrop(event, dropKey, options.onFileChange)}
+        >
+          <span className="bundle-file-picker__button">Choose file</span>
+          <span className="bundle-file-picker__name">
+            {options.selectedFile ? options.selectedFile.name : "No file selected"}
+          </span>
+          <input
+            id={options.inputId}
+            type="file"
+            accept=".csv,.xlsx,.xlsm,.xls"
+            className="bundle-file-input"
+            onDragOver={(event) => onCsvPickerDragOver(event, dropKey)}
+            onDragLeave={(event) => onCsvPickerDragLeave(event, dropKey)}
+            onDrop={(event) => onCsvPickerDrop(event, dropKey, options.onFileChange)}
+            onChange={(event) => options.onFileChange(event.target.files?.[0] || null)}
+          />
+        </label>
+      </div>
+      );
+    },
+    [activeDropKey, onCsvPickerDragLeave, onCsvPickerDragOver, onCsvPickerDrop],
+  );
 
   const steps = STEP_MAP[scope];
   const loadedLocaleColumns = useMemo(() => buildLoadedLocaleColumns(tlkBundles), [tlkBundles]);
@@ -404,7 +587,6 @@ const LocalizationWorkflow = () => {
     setExported(false);
     setImported(false);
     setBuilt(false);
-    setDiffReport(null);
     setArtifacts([]);
     setBundleFiles({});
     setValidationFeedback(null);
@@ -418,6 +600,8 @@ const LocalizationWorkflow = () => {
     setExportProgressLabel("");
     setLastExport(null);
     setCsvExportFileName("latest-localization.csv");
+    setCsvLineEnding("lf");
+    setLoadSourceError("");
     setActiveDropKey(null);
   }, []);
 
@@ -742,7 +926,9 @@ const LocalizationWorkflow = () => {
 
     const validation = validateTlkBundles(bundlesFromFiles);
     if (!validation.ok) {
-      setStatusMessage(validation.issues[0]?.message || "TLK bundle validation failed.");
+      const message = validation.issues[0]?.message || "TLK bundle validation failed.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
       return;
     }
 
@@ -754,7 +940,9 @@ const LocalizationWorkflow = () => {
       const bundle = fallback.bundles[i];
       const dialogFile = getBundleFile(bundle.id, "dialog");
       if (!dialogFile) {
-        setStatusMessage(`Locale ${bundle.locale}: select dialog.tlk file.`);
+        const message = `Locale ${bundle.locale}: select dialog.tlk file.`;
+        setStatusMessage(message);
+        setLoadSourceError(message);
         return;
       }
       const parsedDialog = parseSingleTlkBuffer(await dialogFile.arrayBuffer(), dialogFile.name);
@@ -763,12 +951,16 @@ const LocalizationWorkflow = () => {
       if (!bundle.dialogfAuto && String(bundle.dialogf || "").trim().length > 0) {
         const dialogfFile = getBundleFile(bundle.id, "dialogf");
         if (!dialogfFile) {
-          setStatusMessage(`Locale ${bundle.locale}: select dialogf.tlk file or use fallback.`);
+          const message = `Locale ${bundle.locale}: select dialogf.tlk file or use fallback.`;
+          setStatusMessage(message);
+          setLoadSourceError(message);
           return;
         }
         parsedDialogf = parseSingleTlkBuffer(await dialogfFile.arrayBuffer(), dialogfFile.name);
         if (parsedDialogf.entryCount !== parsedDialog.entryCount) {
-          setStatusMessage(`Entry mismatch for locale ${bundle.locale}: dialog vs dialogf.`);
+          const message = `Entry mismatch for locale ${bundle.locale}: dialog vs dialogf.`;
+          setStatusMessage(message);
+          setLoadSourceError(message);
           return;
         }
       }
@@ -778,7 +970,9 @@ const LocalizationWorkflow = () => {
     const baseCount = parsedBundles[0]?.parsed.entryCount || 0;
     const mismatch = parsedBundles.find((item) => item.parsed.entryCount !== baseCount);
     if (mismatch) {
-      setStatusMessage("Entry count mismatch across locale packs.");
+      const message = "Entry count mismatch across locale packs.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
       return;
     }
 
@@ -786,6 +980,7 @@ const LocalizationWorkflow = () => {
     const builtRows = buildRowsFromParsedTlkBundles(parsedBundles, effectiveColumns);
     const primarySourceName = parsedBundles[0]?.parsed.fileName || fallback.bundles[0]?.dialog || "";
     setCsvExportFileName(makeCsvFileName(primarySourceName));
+    setCsvLineEnding("lf");
     setLocaleColumns(effectiveColumns);
     setRows(cloneRows(builtRows));
     setBaselineRows(cloneRows(builtRows));
@@ -794,6 +989,7 @@ const LocalizationWorkflow = () => {
     setExported(false);
     setBuilt(false);
     setLastExport(null);
+    setLoadSourceError("");
     setStatusMessage(
       fallback.fallbackCount > 0
         ? `Loaded ${builtRows.length} rows with dialogf fallback for ${fallback.fallbackCount} pack(s).`
@@ -806,11 +1002,14 @@ const LocalizationWorkflow = () => {
       const workbook = await parseWorkbookFile(file, XLSX);
       const builtRows = buildTlkRowsFromXlsxRows(workbook.rows);
       if (builtRows.length === 0) {
-        setStatusMessage("CSV has no StrRef rows.");
+        const message = "CSV has no StrRef rows.";
+        setStatusMessage(message);
+        setLoadSourceError(message);
         return false;
       }
       const parsedColumns = getParsedLocaleColumnsFromRows(builtRows);
       setCsvExportFileName(makeCsvFileName(file.name));
+      setCsvLineEnding(await detectCsvLineEnding(file));
       setLocaleColumns(parsedColumns);
       setRows(cloneRows(builtRows));
       setBaselineRows(cloneRows(builtRows));
@@ -819,23 +1018,87 @@ const LocalizationWorkflow = () => {
       setExported(false);
       setBuilt(false);
       setLastExport(null);
+      setLoadSourceError("");
       setStatusMessage(`Loaded ${builtRows.length} rows from ${file.name}.`);
       return true;
     },
     [],
   );
 
+  const loadFromRepo = useCallback(async () => {
+    const branch = String(repoImportBranch || "").trim();
+    const filePath = String(repoImportPath || "").trim();
+    if (!branch) {
+      const message = "Set repository branch first.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
+      return false;
+    }
+    if (!filePath) {
+      const message = "Set repository CSV file path first.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
+      return false;
+    }
+
+    const fetched = await fetchRepoFileFromGitHub({
+      token: githubToken || undefined,
+      repoFullName: GITHUB_REPO,
+      branch,
+      filePath,
+    });
+    const file = new File([fetched.bytes], fetched.fileName, { type: "text/csv;charset=utf-8" });
+    const loaded = await loadFromXlsx(file);
+    if (loaded) {
+      setLoadSourceError("");
+      setStatusMessage(`Loaded ${fetched.filePath} from ${GITHUB_REPO}@${branch}.`);
+    }
+    return loaded;
+  }, [githubToken, loadFromXlsx, repoImportBranch, repoImportPath]);
+
   const onLoadSource = useCallback(async () => {
+    if (isLoadingSource) {
+      return;
+    }
+
+    setLoadSourceError("");
+    setIsLoadingSource(true);
+    setLoadSourceLabel(
+      scope === "rebuild"
+        ? "Importing merged CSV..."
+        : importMode === "repo"
+          ? "Loading CSV from repository..."
+          : importMode === "xlsx"
+            ? "Loading CSV model..."
+            : "Loading TLK bundles...",
+    );
     try {
       if (scope === "rebuild") {
-        if (!mergedXlsxFile) {
-          setStatusMessage("Select merged CSV first.");
+        if (importMode === "repo") {
+          const ok = await loadFromRepo();
+          if (ok) {
+            setLoadSourceError("");
+            setImported(true);
+          }
           return;
         }
-        const ok = await loadFromXlsx(mergedXlsxFile);
-        if (ok) {
-          setImported(true);
+        if (importMode === "xlsx") {
+          if (!mergedXlsxFile) {
+            const message = "Select CSV source first.";
+            setStatusMessage(message);
+            setLoadSourceError(message);
+            return;
+          }
+          const ok = await loadFromXlsx(mergedXlsxFile);
+          if (ok) {
+            setLoadSourceError("");
+            setImported(true);
+          }
+          return;
         }
+        const message = "Unsupported import mode.";
+        setStatusMessage(message);
+        setLoadSourceError(message);
         return;
       }
 
@@ -845,17 +1108,30 @@ const LocalizationWorkflow = () => {
       }
       if (importMode === "xlsx") {
         if (!sourceXlsxFile) {
-          setStatusMessage("Select CSV source first.");
+          const message = "Select CSV source first.";
+          setStatusMessage(message);
+          setLoadSourceError(message);
           return;
         }
         await loadFromXlsx(sourceXlsxFile);
         return;
       }
-      setStatusMessage("Repository branch mode is UI-only in static MVP.");
+      if (importMode === "repo") {
+        await loadFromRepo();
+        return;
+      }
+      const message = "Unsupported import mode.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Source load failed.");
+      const message = error instanceof Error ? error.message : "Source load failed.";
+      setStatusMessage(message);
+      setLoadSourceError(message);
+    } finally {
+      setIsLoadingSource(false);
+      setLoadSourceLabel("");
     }
-  }, [importMode, loadFromTlk, loadFromXlsx, mergedXlsxFile, scope, sourceXlsxFile]);
+  }, [importMode, isLoadingSource, loadFromRepo, loadFromTlk, loadFromXlsx, mergedXlsxFile, scope, sourceXlsxFile]);
 
   const onParseAndGoEdit = useCallback(() => {
     if (!sourceLoaded) {
@@ -883,9 +1159,10 @@ const LocalizationWorkflow = () => {
 
   const runCsvExport = useCallback(async (
     purpose: "generate" | "publish",
-    options?: { saveToDisk?: boolean },
+    options?: { saveToDisk?: boolean; lineEnding?: "lf" | "crlf" },
   ) => {
     const shouldSaveToDisk = options?.saveToDisk ?? (purpose === "generate");
+    const exportLineEnding = options?.lineEnding ?? csvLineEnding;
     const fileName = csvExportFileName || makeCsvFileName();
     setExportRunMode(purpose);
     setIsExportingXlsx(true);
@@ -899,7 +1176,7 @@ const LocalizationWorkflow = () => {
 
     try {
       await yieldToUiFrame();
-      const task = createCsvExportTask(rows, localeColumns, fileName, ({ doneRows, totalRows, progress }) => {
+      const task = createCsvExportTask(rows, localeColumns, fileName, exportLineEnding, ({ doneRows, totalRows, progress }) => {
         setExportProgress(progress);
         setExportProgressLabel(`${progress}% (${doneRows}/${totalRows})`);
       });
@@ -926,7 +1203,7 @@ const LocalizationWorkflow = () => {
       setExportProgress(0);
       setExportProgressLabel("");
     }
-  }, [csvExportFileName, localeColumns, rows]);
+  }, [csvExportFileName, csvLineEnding, localeColumns, rows]);
 
   const onExportXlsx = useCallback(async () => {
     if (!validated) {
@@ -945,6 +1222,27 @@ const LocalizationWorkflow = () => {
     }
   }, [isExportingXlsx, runCsvExport, validated]);
 
+  const detectRepoTargetLineEnding = useCallback(
+    async (fileName: string): Promise<"lf" | "crlf"> => {
+      try {
+        const targetPath = `${GITHUB_CSV_FOLDER}/${fileName}`;
+        const fetched = await fetchRepoFileFromGitHub({
+          token: githubToken || undefined,
+          repoFullName: GITHUB_REPO,
+          branch: GITHUB_BASE_BRANCH,
+          filePath: targetPath,
+        });
+        const bytes = new Uint8Array(fetched.bytes);
+        const probeSize = Math.min(bytes.byteLength, 1024 * 1024);
+        const probeText = new TextDecoder().decode(bytes.subarray(0, probeSize));
+        return probeText.includes("\r\n") ? "crlf" : "lf";
+      } catch {
+        return csvLineEnding;
+      }
+    },
+    [csvLineEnding, githubToken],
+  );
+
   const onOpenPullRequest = useCallback(async () => {
     if (!validated) {
       setStatusMessage("Validate grid before publish.");
@@ -960,12 +1258,8 @@ const LocalizationWorkflow = () => {
     }
 
     try {
-      let csvForPublish = lastExport;
-      if (!exported || !lastExport) {
-        const preparedCsv = await runCsvExport("publish", { saveToDisk: false });
-        if (!preparedCsv) return;
-        csvForPublish = preparedCsv;
-      }
+      const targetLineEnding = await detectRepoTargetLineEnding(csvExportFileName);
+      const csvForPublish = await runCsvExport("publish", { saveToDisk: false, lineEnding: targetLineEnding });
       if (!csvForPublish) {
         setStatusMessage("CSV payload missing for publish.");
         return;
@@ -988,20 +1282,7 @@ const LocalizationWorkflow = () => {
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
     }
-  }, [exported, githubToken, hasPublishableChanges, isExportingXlsx, lastExport, runCsvExport, validated]);
-
-  const onGenerateDiff = useCallback(() => {
-    const diff = computeDiff({
-      baselineRows,
-      currentRows: rows,
-      localeColumns,
-      previewLimit: 12,
-    });
-    setDiffReport(diff.report);
-    setStatusMessage(
-      `Diff generated: changed=${diff.counts.changed}, conflicts=${diff.counts.conflicts}.`,
-    );
-  }, [baselineRows, localeColumns, rows]);
+  }, [csvExportFileName, detectRepoTargetLineEnding, githubToken, hasPublishableChanges, isExportingXlsx, runCsvExport, validated]);
 
   const onDownloadValidationSummary = useCallback(async () => {
     if (!validationFeedback) {
@@ -1054,31 +1335,15 @@ const LocalizationWorkflow = () => {
     setStatusMessage(`Validation summary downloaded: ${fileName}`);
   }, [coverage, localeColumns, rows, validationFeedback]);
 
-  const onExportDiffJson = useCallback(async () => {
-    if (!diffReport) {
-      setStatusMessage("Generate diff first.");
-      return;
-    }
-    const content = new TextEncoder().encode(JSON.stringify(diffReport, null, 2));
-    await saveBytesToDisk(content, "diff_report.json", "application/json");
-    setStatusMessage("Diff JSON exported.");
-  }, [diffReport]);
-
-  const onExportDiffMarkdown = useCallback(async () => {
-    if (!diffReport) {
-      setStatusMessage("Generate diff first.");
-      return;
-    }
-    const md = renderDiffMarkdown(diffReport);
-    await saveBytesToDisk(new TextEncoder().encode(md), "diff_report.md", "text/markdown");
-    setStatusMessage("Diff Markdown exported.");
-  }, [diffReport]);
-
   const onRebuildTlk = useCallback(async () => {
     if (!rows.length || localeColumns.length === 0) {
       setStatusMessage("Import CSV first.");
       return;
     }
+
+    const sourceNameForZip = csvExportFileName || mergedXlsxFile?.name || repoImportPath || "localization.csv";
+    const zipName = makeRebuildZipName(sourceNameForZip);
+    const zipRoot = makeSafeDownloadStem(safeFileNameFromPath(sourceNameForZip), "localization");
 
     const generatedArtifacts: ArtifactRow[] = [];
     for (let i = 0; i < localeColumns.length; i += 1) {
@@ -1086,18 +1351,47 @@ const LocalizationWorkflow = () => {
       const locale = String(col.locale || "").toUpperCase().trim();
       const languageId = TLK_LOCALE_TO_LANGUAGE_ID[locale] ?? 0;
       const binary = buildSingleTlkBinaryFromColumn(rows, col.field, languageId);
-      const fileName = makeTlkFileName("rebuilt", locale, col.variant === "dialogf");
-      await saveBytesToDisk(binary, fileName, "application/octet-stream");
+      const bytes = new Uint8Array(binary.byteLength);
+      bytes.set(binary);
+      const fileName = makeRebuildArtifactName(locale, col.variant === "dialogf");
       generatedArtifacts.push({
         file: fileName,
-        checksum: quickChecksumHex(binary),
+        checksum: quickChecksumHex(bytes),
+        bytes,
+        locale,
+        isDialogf: col.variant === "dialogf",
       });
+    }
+
+    if (generatedArtifacts.length > 1) {
+      const zipBytes = buildZipArchive(
+        generatedArtifacts.map((artifact) => ({
+          name: makeZipArtifactPath(zipRoot, artifact.locale, artifact.isDialogf),
+          bytes: artifact.bytes,
+        })),
+      );
+      await saveBytesToDisk(zipBytes, zipName, "application/zip");
+      setStatusMessage(`Rebuild completed. Downloaded ${zipName} with ${generatedArtifacts.length} TLK files.`);
+    } else if (generatedArtifacts.length === 1) {
+      const artifact = generatedArtifacts[0];
+      await saveBytesToDisk(artifact.bytes, artifact.file, "application/octet-stream");
+      setStatusMessage(`Rebuild completed. Downloaded ${artifact.file}.`);
+    } else {
+      setStatusMessage("No TLK artifacts were generated.");
     }
 
     setArtifacts(generatedArtifacts);
     setBuilt(true);
-    setStatusMessage(`Rebuild completed. Generated ${generatedArtifacts.length} TLK artifact(s).`);
-  }, [localeColumns, rows]);
+  }, [csvExportFileName, localeColumns, mergedXlsxFile?.name, repoImportPath, rows]);
+
+  const onDownloadArtifact = useCallback(async (artifact: ArtifactRow) => {
+    try {
+      await saveBytesToDisk(artifact.bytes, artifact.file, "application/octet-stream");
+      setStatusMessage(`Downloaded ${artifact.file}.`);
+    } catch {
+      setStatusMessage(`Could not download ${artifact.file}.`);
+    }
+  }, []);
 
   const onUndo = useCallback(() => {
     if (!gridApi) return;
@@ -1134,7 +1428,27 @@ const LocalizationWorkflow = () => {
     Boolean(validationFeedback?.canProceed) &&
     sourceLoaded &&
     rows.length > 0 &&
-    localeColumns.length > 0;
+    localeColumns.length > 0 &&
+    hasPublishableChanges;
+
+  const kpiItems = useMemo(() => {
+    if (scope === "rebuild") {
+      return [
+        { value: `${Math.round(coverage * 10) / 10}%`, label: "Coverage" },
+        { value: String(qaWarnings), label: "QA warnings" },
+        { value: currentPageSummary, label: "Dataset" },
+      ];
+    }
+
+    return [
+      { value: `${activeStepIndex + 1}/${steps.length}`, label: "Stage" },
+      { value: `${Math.round(coverage * 10) / 10}%`, label: "Coverage" },
+      { value: String(qaWarnings), label: "QA warnings" },
+      { value: String(blockingErrors), label: "Blocking errors" },
+      { value: String(rows.length - blockingErrors - qaWarnings), label: "Validated rows" },
+      { value: currentPageSummary, label: "Dataset" },
+    ];
+  }, [activeStepIndex, blockingErrors, coverage, currentPageSummary, qaWarnings, rows.length, scope, steps.length]);
 
   const onStepSelect = useCallback(
     (index: number) => {
@@ -1151,41 +1465,19 @@ const LocalizationWorkflow = () => {
 
   return (
     <main className="workflow-page">
-      <header className="workflow-page__topbar">
-        <div>
-          <h1>TLK Forge</h1>
-          <p>Aurora-first workflow: import, edit, publish, rebuild.</p>
-        </div>
+      <header className="workflow-page__topbar workflow-page__topbar--scope-only">
         <ScopeSwitcher scope={scope} onScopeChange={onScopeChange} />
       </header>
 
       <StepStrip steps={stepTitles} activeStep={activeStepIndex} stepStates={stepStates} onStepSelect={onStepSelect} />
 
-      <section className="workflow-kpis">
-        <article className="kpi">
-          <b>{`${activeStepIndex + 1}/${steps.length}`}</b>
-          <small>Stage</small>
-        </article>
-        <article className="kpi">
-          <b>{`${Math.round(coverage * 10) / 10}%`}</b>
-          <small>Coverage</small>
-        </article>
-        <article className="kpi">
-          <b>{qaWarnings}</b>
-          <small>QA warnings</small>
-        </article>
-        <article className="kpi">
-          <b>{blockingErrors}</b>
-          <small>Blocking errors</small>
-        </article>
-        <article className="kpi">
-          <b>{rows.length - blockingErrors - qaWarnings}</b>
-          <small>Validated rows</small>
-        </article>
-        <article className="kpi">
-          <b>{currentPageSummary}</b>
-          <small>Dataset</small>
-        </article>
+      <section className={`workflow-kpis${scope === "rebuild" ? " workflow-kpis--three" : ""}`}>
+        {kpiItems.map((item) => (
+          <article className="kpi" key={item.label}>
+            <b>{item.value}</b>
+            <small>{item.label}</small>
+          </article>
+        ))}
       </section>
 
       {scope === "exchange" && activeStepIndex === 0 && (
@@ -1318,35 +1610,42 @@ const LocalizationWorkflow = () => {
           )}
 
           {importMode === "xlsx" && (
-            <div className="workflow-screen__field">
-              <label htmlFor="xlsx-source">CSV source</label>
-              <input
-                id="xlsx-source"
-                type="file"
-                accept=".csv,.xlsx,.xlsm,.xls"
-                onChange={(event) => setSourceXlsxFile(event.target.files?.[0] || null)}
-              />
-            </div>
+            renderCsvModelFilePicker({
+              inputId: "xlsx-source",
+              selectedFile: sourceXlsxFile,
+              onFileChange: setSourceXlsxFile,
+            })
           )}
 
           {importMode === "repo" && (
-            <p className="workflow-screen__hint">
-              Repo branch import is UI-only in static hosting mode. Data fetch requires dedicated backend/connector.
-            </p>
+            renderRepoSourceFields()
           )}
 
           <div className="workflow-actions">
-            <button type="button" onClick={onLoadSource}>
-              Load Source
+            <button type="button" onClick={onLoadSource} disabled={isLoadingSource}>
+              {isLoadingSource ? "Loading..." : "Load Source"}
             </button>
-            <button type="button" className="workflow-actions__primary" onClick={onParseAndGoEdit} disabled={!sourceLoaded}>
+            <button type="button" className="workflow-actions__primary" onClick={onParseAndGoEdit} disabled={!sourceLoaded || isLoadingSource}>
               Parse &amp; Validate
             </button>
           </div>
+          {isLoadingSource ? (
+            <div className="workflow-inline-progress" role="status" aria-live="polite">
+              <span className="workflow-inline-progress__label">
+                <span className="workflow-inline-progress__spinner" aria-hidden="true" />
+                {loadSourceLabel || "Loading source..."}
+              </span>
+            </div>
+          ) : null}
+          {!isLoadingSource && loadSourceError ? (
+            <div className="workflow-inline-error" role="alert" aria-live="assertive">
+              {loadSourceError}
+            </div>
+          ) : null}
         </section>
       )}
 
-      {((scope === "exchange" && activeStepIndex === 1) || (scope === "rebuild" && activeStepIndex === 1)) && (
+      {scope === "exchange" && activeStepIndex === 1 && (
         <section className="workflow-screen">
           <header className="workflow-screen__header">
             <h2>2) Edit TLK Entries</h2>
@@ -1539,50 +1838,65 @@ const LocalizationWorkflow = () => {
       {scope === "rebuild" && activeStepIndex === 0 && (
         <section className="workflow-screen">
           <header className="workflow-screen__header">
-            <h2>Rebuild Scope: 1) Load Approved CSV</h2>
-            <p>Import reviewed CSV and prepare rebuild.</p>
+            <h2>1) Load Approved CSV</h2>
           </header>
-          <div className="workflow-screen__field">
-            <label htmlFor="merged-xlsx">Merged CSV</label>
-            <input
-              id="merged-xlsx"
-              type="file"
-              accept=".csv,.xlsx,.xlsm,.xls"
-              onChange={(event) => setMergedXlsxFile(event.target.files?.[0] || null)}
-            />
-          </div>
-          <div className="workflow-actions">
-            <button type="button" className="workflow-actions__primary" onClick={onLoadSource}>
-              Import Merged CSV
+          <div className="mode-tabs">
+            <button
+              type="button"
+              className={importMode === "xlsx" ? "mode-tabs__active" : ""}
+              onClick={() => setImportMode("xlsx")}
+            >
+              From CSV Model
             </button>
-            <button type="button" onClick={onGenerateDiff} disabled={!sourceLoaded}>
-              Generate Diff Report
+            <button
+              type="button"
+              className={importMode === "repo" ? "mode-tabs__active" : ""}
+              onClick={() => setImportMode("repo")}
+            >
+              From Repository Branch
             </button>
           </div>
-          {diffReport && (
-            <div className="diff-report">
-              <p>{`Changed: ${diffReport.summary.changed}, Added: ${diffReport.summary.added}, Removed: ${diffReport.summary.removed}, Conflicts: ${diffReport.summary.conflicts}`}</p>
-              <div className="workflow-actions">
-                <button type="button" onClick={onExportDiffJson}>
-                  Export Diff JSON
-                </button>
-                <button type="button" onClick={onExportDiffMarkdown}>
-                  Export Diff Markdown
-                </button>
-                <button type="button" className="workflow-actions__secondary" onClick={() => setStepIndex(1)} disabled={!imported}>
-                  Continue to Rebuild
-                </button>
-              </div>
-            </div>
+          {importMode === "xlsx" && (
+            renderCsvModelFilePicker({
+              inputId: "merged-xlsx",
+              selectedFile: mergedXlsxFile,
+              onFileChange: setMergedXlsxFile,
+            })
           )}
+          {importMode === "repo" && renderRepoSourceFields()}
+          <div className="workflow-actions">
+            <button type="button" className="workflow-actions__primary" onClick={onLoadSource} disabled={isLoadingSource}>
+              {isLoadingSource ? "Loading..." : "Load Source"}
+            </button>
+            <button
+              type="button"
+              className="workflow-actions__secondary"
+              onClick={() => setStepIndex(1)}
+              disabled={!imported || isLoadingSource}
+            >
+              Continue to Rebuild
+            </button>
+          </div>
+          {isLoadingSource ? (
+            <div className="workflow-inline-progress" role="status" aria-live="polite">
+              <span className="workflow-inline-progress__label">
+                <span className="workflow-inline-progress__spinner" aria-hidden="true" />
+                {loadSourceLabel || "Importing source..."}
+              </span>
+            </div>
+          ) : null}
+          {!isLoadingSource && loadSourceError ? (
+            <div className="workflow-inline-error" role="alert" aria-live="assertive">
+              {loadSourceError}
+            </div>
+          ) : null}
         </section>
       )}
 
       {scope === "rebuild" && activeStepIndex === 1 && (
         <section className="workflow-screen">
           <header className="workflow-screen__header">
-            <h2>Rebuild Scope: 2) Rebuild TLK/TLKF</h2>
-            <p>Generate TLK artifacts from loaded CSV dataset.</p>
+            <h2>2) Rebuild TLK/TLKF</h2>
           </header>
           <div className="workflow-actions">
             <button type="button" className="workflow-actions__primary" onClick={onRebuildTlk} disabled={!sourceLoaded}>
@@ -1597,6 +1911,7 @@ const LocalizationWorkflow = () => {
                     <th>File</th>
                     <th>Status</th>
                     <th>Checksum</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1607,6 +1922,11 @@ const LocalizationWorkflow = () => {
                         <span className={statusBadgeClass("validated")}>Built</span>
                       </td>
                       <td>{artifact.checksum}</td>
+                      <td>
+                        <button type="button" onClick={() => void onDownloadArtifact(artifact)}>
+                          Download
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

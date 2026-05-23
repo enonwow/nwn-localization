@@ -8,6 +8,7 @@ type ExportRequest = {
   localeColumns: LocaleColumn[];
   fileName: string;
   chunkSize?: number;
+  lineEnding?: "lf" | "crlf";
 };
 
 type ProgressMessage = {
@@ -44,7 +45,7 @@ const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWork
 
 workerScope.onmessage = (event: MessageEvent<ExportRequest>) => {
   try {
-    const { rows, localeColumns, fileName, chunkSize } = event.data;
+    const { rows, localeColumns, fileName, chunkSize, lineEnding } = event.data;
     const totalRows = rows.length;
     const step = Math.max(1000, Number(chunkSize || 5000));
     const headers = buildXlsxHeaderForExport(localeColumns);
@@ -75,7 +76,8 @@ workerScope.onmessage = (event: MessageEvent<ExportRequest>) => {
       workerScope.postMessage(progressMessage);
     }
 
-    const content = lines.join("\r\n");
+    const eol = lineEnding === "crlf" ? "\r\n" : "\n";
+    const content = lines.join(eol);
     const bytes = new TextEncoder().encode(content);
     const cloned = bytes.slice();
     const resultMessage: ResultMessage = { type: "result", fileName, bytes: cloned.buffer };
@@ -86,4 +88,3 @@ workerScope.onmessage = (event: MessageEvent<ExportRequest>) => {
     workerScope.postMessage(errorMessage);
   }
 };
-

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { computeDiff, renderDiffMarkdown } from "../diff";
-import { publishCsvToGitHub } from "../github";
+import { fetchRepoFileFromGitHub, publishCsvToGitHub } from "../github";
 import {
   buildRowsFromParsedTlkBundles,
   buildSingleTlkBinaryFromColumn,
@@ -483,6 +483,33 @@ describe("GitHub publish", () => {
       expect(result.commitSha).toBe("commit-sha-1");
       expect(result.filePath).toBe("csv-latest/dialog_en.csv");
       expect(fetchMock).toHaveBeenCalledTimes(5);
+    } finally {
+      (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it("downloads CSV from repository branch", async () => {
+    const originalFetch = globalThis.fetch;
+    const csvText = "StrRef,Source_EN,Status\r\n1,Hello,Draft";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/contents/csv-latest/dialog_en.csv?ref=main")) {
+        return new Response(new TextEncoder().encode(csvText), { status: 200 });
+      }
+      return new Response("not-found", { status: 404 });
+    });
+
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const result = await fetchRepoFileFromGitHub({
+        repoFullName: "enonwow/nwn-localization-test",
+        branch: "main",
+        filePath: "csv-latest/dialog_en.csv",
+      });
+
+      expect(result.fileName).toBe("dialog_en.csv");
+      expect(result.filePath).toBe("csv-latest/dialog_en.csv");
+      expect(new TextDecoder().decode(new Uint8Array(result.bytes))).toBe(csvText);
     } finally {
       (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
     }

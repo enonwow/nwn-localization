@@ -14,6 +14,10 @@
   flex-wrap: wrap;
 }
 
+.workflow-page__topbar--scope-only {
+  justify-content: flex-start;
+}
+
 .workflow-page__topbar h1 {
   margin: 0;
   font-size: 1.35rem;
@@ -31,8 +35,10 @@
   align-items: center;
   gap: 0.65rem;
   padding: 0.45rem;
-  border: 1px solid #1f3650;
+  border: 1px solid #2f547a;
+  background: linear-gradient(180deg, #0f2842, #0d2238);
   border-radius: 0.8rem;
+  box-shadow: 0 8px 20px rgba(5, 14, 26, 0.35);
 }
 
 .scope-switch__label {
@@ -74,8 +80,8 @@
 }
 
 .step-strip__step {
-  border: 1px solid #1f3650;
-  background: #101f30;
+  border: 1px solid #2f557b;
+  background: #122a44;
   color: #d7e6f5;
   border-radius: 0.6rem;
   padding: 0.4rem 0.7rem;
@@ -105,8 +111,8 @@
 }
 
 .step-strip__step--locked {
-  border-color: #2b3f54;
-  background: #101a28;
+  border-color: #334a63;
+  background: #12253a;
   color: #93a7bf;
 }
 
@@ -148,13 +154,18 @@
   gap: 0.6rem;
 }
 
+.workflow-kpis--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .kpi {
-  border: 1px solid #264767;
+  border: 1px solid #325d87;
   border-radius: 0.65rem;
   padding: 0.6rem 0.7rem;
-  background: #0f233b;
+  background: linear-gradient(180deg, #132d4a, #112842);
   display: grid;
   gap: 0.2rem;
+  box-shadow: 0 4px 14px rgba(4, 13, 23, 0.22);
 }
 
 .kpi b {
@@ -167,10 +178,11 @@
 }
 
 .workflow-screen {
-  border: 1px solid #233e5b;
-  background: linear-gradient(180deg, #101f33, #0e1f32);
+  border: 1px solid #325f8c;
+  background: linear-gradient(180deg, #132f4d, #102842);
   border-radius: 0.75rem;
   padding: 1rem;
+  box-shadow: 0 10px 24px rgba(4, 12, 22, 0.3);
 }
 
 .grid-2 {
@@ -180,8 +192,8 @@
 }
 
 .card {
-  border: 1px solid #244361;
-  background: #0d2038;
+  border: 1px solid #325d86;
+  background: linear-gradient(180deg, #122c49, #102741);
   border-radius: 0.7rem;
   padding: 0.75rem;
 }
@@ -249,9 +261,10 @@
 
 .table-wrap {
   margin-top: 0.8rem;
-  border: 1px solid #2a4562;
+  border: 1px solid #3a648e;
   border-radius: 0.65rem;
   overflow: auto;
+  background: #112942;
 }
 
 .table-wrap table {
@@ -346,6 +359,10 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.bundle-file-picker--csv {
+  width: min(640px, 100%);
 }
 
 .locale-config {
@@ -511,6 +528,16 @@
   height: 100%;
   background: linear-gradient(90deg, #2d78c8, #65b7ff);
   transition: width 0.18s ease;
+}
+
+.workflow-inline-error {
+  margin-top: 0.55rem;
+  border: 1px solid #7d4141;
+  background: #3a1f27;
+  color: #ffd7d7;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.86rem;
 }
 
 @keyframes workflow-spin {
@@ -785,6 +812,7 @@
 }
 
 .workflow-grid__canvas.ag-theme-quartz {
+  --ag-browser-color-scheme: dark;
   --ag-row-border-style: solid;
   --ag-row-border-color: #2f4f72;
   --ag-row-border-width: 1px;
@@ -809,6 +837,8 @@
 .workflow-grid__canvas .ag-cell-inline-editing textarea {
   color: #f2f8ff !important;
   -webkit-text-fill-color: #f2f8ff;
+  background: #183a5e !important;
+  border-color: #4a7098 !important;
 }
 
 .workflow-grid__canvas .ag-cell-inline-editing input::placeholder,
@@ -839,11 +869,87 @@
   border-color: #3a5a80;
 }
 
+.workflow-grid__canvas .ag-popup .ag-picker-field-wrapper,
+.workflow-grid__canvas .ag-popup .ag-picker-field-display,
+.workflow-grid__canvas .ag-popup .ag-picker-field-icon,
+.workflow-grid__canvas .ag-popup .ag-list-item,
+.workflow-grid__canvas .ag-popup .ag-virtual-list-item {
+  color: #eef5ff !important;
+  background: #0f2239 !important;
+  border-color: #3a5a80 !important;
+}
+
+.workflow-grid__canvas .ag-popup .ag-list-item:hover,
+.workflow-grid__canvas .ag-popup .ag-virtual-list-item:hover,
+.workflow-grid__canvas .ag-popup .ag-list-item.ag-active-item,
+.workflow-grid__canvas .ag-popup .ag-virtual-list-item.ag-active-item {
+  background: #183a5e !important;
+  color: #f3f8ff !important;
+}
+
 .workflow-grid__canvas .ag-popup .ag-set-filter-item,
 .workflow-grid__canvas .ag-popup .ag-filter-value,
 .workflow-grid__canvas .ag-popup .ag-filter-body,
 .workflow-grid__canvas .ag-popup .ag-filter-condition {
   color: #e8f2ff;
+}
+
+/* AG Grid popups can be rendered outside workflow-grid__canvas (popup parent),
+   so keep dark text contrast rules global to quartz popup surfaces. */
+.ag-theme-quartz .ag-popup,
+.ag-theme-quartz-dark .ag-popup,
+.ag-theme-quartz .ag-menu,
+.ag-theme-quartz-dark .ag-menu,
+.ag-theme-quartz .ag-popup .ag-filter-wrapper,
+.ag-theme-quartz-dark .ag-popup .ag-filter-wrapper,
+.ag-theme-quartz .ag-popup .ag-filter-body-wrapper,
+.ag-theme-quartz-dark .ag-popup .ag-filter-body-wrapper {
+  background: #112840 !important;
+  color: #e8f2ff !important;
+  border-color: #35567d !important;
+}
+
+.ag-theme-quartz .ag-popup input,
+.ag-theme-quartz-dark .ag-popup input,
+.ag-theme-quartz .ag-popup textarea,
+.ag-theme-quartz-dark .ag-popup textarea,
+.ag-theme-quartz .ag-popup select,
+.ag-theme-quartz-dark .ag-popup select,
+.ag-theme-quartz .ag-popup .ag-input-field-input,
+.ag-theme-quartz-dark .ag-popup .ag-input-field-input,
+.ag-theme-quartz .ag-popup .ag-text-field-input,
+.ag-theme-quartz-dark .ag-popup .ag-text-field-input {
+  color: #eef5ff !important;
+  -webkit-text-fill-color: #eef5ff !important;
+  caret-color: #eef5ff !important;
+  background: #0f2239 !important;
+  border-color: #3a5a80 !important;
+}
+
+.ag-theme-quartz .ag-popup input::placeholder,
+.ag-theme-quartz-dark .ag-popup input::placeholder,
+.ag-theme-quartz .ag-popup textarea::placeholder,
+.ag-theme-quartz-dark .ag-popup textarea::placeholder {
+  color: #9eb5d0 !important;
+}
+
+.ag-theme-quartz .ag-popup .ag-picker-field-wrapper,
+.ag-theme-quartz-dark .ag-popup .ag-picker-field-wrapper,
+.ag-theme-quartz .ag-popup .ag-picker-field-display,
+.ag-theme-quartz-dark .ag-popup .ag-picker-field-display,
+.ag-theme-quartz .ag-popup .ag-picker-field-icon,
+.ag-theme-quartz-dark .ag-popup .ag-picker-field-icon,
+.ag-theme-quartz .ag-popup .ag-list-item,
+.ag-theme-quartz-dark .ag-popup .ag-list-item,
+.ag-theme-quartz .ag-popup .ag-virtual-list-item,
+.ag-theme-quartz-dark .ag-popup .ag-virtual-list-item,
+.ag-theme-quartz .ag-popup .ag-filter-value,
+.ag-theme-quartz-dark .ag-popup .ag-filter-value,
+.ag-theme-quartz .ag-popup .ag-set-filter-item,
+.ag-theme-quartz-dark .ag-popup .ag-set-filter-item,
+.ag-theme-quartz .ag-popup .ag-filter-condition,
+.ag-theme-quartz-dark .ag-popup .ag-filter-condition {
+  color: #eef5ff !important;
 }
 
 .workflow-grid__resize-hint {
