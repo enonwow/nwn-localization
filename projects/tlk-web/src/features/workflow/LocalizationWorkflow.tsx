@@ -100,18 +100,10 @@ function normalizeGithubRepoRef(value: string | undefined): string {
   return `${parts[0]}/${parts[1]}`;
 }
 
-function normalizeGithubPath(value: string | undefined, fallback: string): string {
+function normalizeGithubPath(value: string, fallback: string): string {
   const normalized = String(value || "").trim().replace(/^\/+|\/+$/g, "");
   return normalized || fallback;
 }
-
-const GITHUB_REPO = normalizeGithubRepoRef(import.meta.env.VITE_GITHUB_PR_REPO)
-  || normalizeGithubRepoRef(import.meta.env.VITE_GITHUB_PR_REPO_URL)
-  || DEFAULT_GITHUB_REPO;
-const GITHUB_BASE_BRANCH = normalizeGithubPath(import.meta.env.VITE_GITHUB_BASE_BRANCH, DEFAULT_GITHUB_BASE_BRANCH);
-const GITHUB_CSV_FOLDER = normalizeGithubPath(import.meta.env.VITE_GITHUB_CSV_FOLDER, DEFAULT_GITHUB_CSV_FOLDER);
-const GITHUB_CSV_FOLDER_URL = `https://github.com/${GITHUB_REPO}/tree/${GITHUB_BASE_BRANCH}/${GITHUB_CSV_FOLDER}`;
-const GITHUB_PUBLIC_TEST_TOKEN = String(import.meta.env.VITE_GITHUB_PUBLIC_TOKEN || "").trim();
 
 const STEP_MAP: Record<WorkflowScope, WorkflowStep[]> = {
   exchange: [
@@ -354,8 +346,11 @@ const LocalizationWorkflow = () => {
   const [extraXlsxLocales, setExtraXlsxLocales] = useState<string[]>([]);
   const [sourceXlsxFile, setSourceXlsxFile] = useState<File | null>(null);
   const [mergedXlsxFile, setMergedXlsxFile] = useState<File | null>(null);
-  const [repoImportBranch, setRepoImportBranch] = useState(GITHUB_BASE_BRANCH);
-  const [repoImportPath, setRepoImportPath] = useState(`${GITHUB_CSV_FOLDER}/latest-localization.csv`);
+  const [githubRepoInput, setGithubRepoInput] = useState(DEFAULT_GITHUB_REPO);
+  const [githubBaseBranchInput, setGithubBaseBranchInput] = useState(DEFAULT_GITHUB_BASE_BRANCH);
+  const [githubCsvFolderInput, setGithubCsvFolderInput] = useState(DEFAULT_GITHUB_CSV_FOLDER);
+  const [repoImportBranch, setRepoImportBranch] = useState(DEFAULT_GITHUB_BASE_BRANCH);
+  const [repoImportPath, setRepoImportPath] = useState(`${DEFAULT_GITHUB_CSV_FOLDER}/latest-localization.csv`);
   const [rows, setRows] = useState<TlkGridRow[]>([]);
   const [baselineRows, setBaselineRows] = useState<TlkGridRow[]>([]);
   const [localeColumns, setLocaleColumns] = useState<LocaleColumn[]>([]);
@@ -372,6 +367,7 @@ const LocalizationWorkflow = () => {
   const [loadSourceLabel, setLoadSourceLabel] = useState("");
   const [loadSourceError, setLoadSourceError] = useState("");
   const [isExportingXlsx, setIsExportingXlsx] = useState(false);
+  const [isPublishingPr, setIsPublishingPr] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportProgressLabel, setExportProgressLabel] = useState("");
   const [lastExport, setLastExport] = useState<{ fileName: string; bytes: Uint8Array } | null>(null);
@@ -381,7 +377,6 @@ const LocalizationWorkflow = () => {
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
   const [githubRuntimeToken, setGithubRuntimeToken] = useState(() => {
-    if (GITHUB_PUBLIC_TEST_TOKEN) return GITHUB_PUBLIC_TEST_TOKEN;
     try {
       return String(window.sessionStorage.getItem("tlkForgeGitHubToken") || "").trim();
     } catch {
@@ -393,6 +388,13 @@ const LocalizationWorkflow = () => {
   const exportCancelRef = useRef<(() => void) | null>(null);
   const bundleInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const githubToken = String(githubRuntimeToken || "").trim();
+  const githubRepo = normalizeGithubRepoRef(githubRepoInput);
+  const githubBaseBranch = normalizeGithubPath(githubBaseBranchInput, DEFAULT_GITHUB_BASE_BRANCH);
+  const githubCsvFolder = normalizeGithubPath(githubCsvFolderInput, DEFAULT_GITHUB_CSV_FOLDER);
+  const githubCsvFolderUrl = githubRepo
+    ? `https://github.com/${githubRepo}/tree/${githubBaseBranch}/${githubCsvFolder}`
+    : "";
+  const isGithubRepoValid = githubRepo.length > 0;
   const onGithubTokenChange = useCallback((nextValue: string) => {
     setGithubRuntimeToken(nextValue);
     try {
@@ -456,13 +458,23 @@ const LocalizationWorkflow = () => {
   const renderRepoSourceFields = useCallback(() => (
     <>
       <div className="workflow-screen__field">
+        <label htmlFor="repo-name">Repository (owner/name or URL)</label>
+        <input
+          id="repo-name"
+          type="text"
+          value={githubRepoInput}
+          onChange={(event) => setGithubRepoInput(event.target.value)}
+          placeholder={DEFAULT_GITHUB_REPO}
+        />
+      </div>
+      <div className="workflow-screen__field">
         <label htmlFor="repo-branch">Repository branch</label>
         <input
           id="repo-branch"
           type="text"
           value={repoImportBranch}
           onChange={(event) => setRepoImportBranch(event.target.value)}
-          placeholder={GITHUB_BASE_BRANCH}
+          placeholder={githubBaseBranch}
         />
       </div>
       <div className="workflow-screen__field">
@@ -472,7 +484,7 @@ const LocalizationWorkflow = () => {
           type="text"
           value={repoImportPath}
           onChange={(event) => setRepoImportPath(event.target.value)}
-          placeholder={`${GITHUB_CSV_FOLDER}/${csvExportFileName}`}
+          placeholder={`${githubCsvFolder}/${csvExportFileName}`}
         />
       </div>
       <div className="workflow-screen__field">
@@ -486,10 +498,27 @@ const LocalizationWorkflow = () => {
         />
       </div>
       <p className="workflow-screen__hint">
-        Loads CSV from <code>{GITHUB_REPO}</code> using branch + path.
+        {isGithubRepoValid ? (
+          <>
+            Loads CSV from <code>{githubRepo}</code> using branch + path.
+          </>
+        ) : (
+          "Provide a valid GitHub repository first (owner/name or URL)."
+        )}
       </p>
     </>
-  ), [csvExportFileName, githubRuntimeToken, onGithubTokenChange, repoImportBranch, repoImportPath]);
+  ), [
+    csvExportFileName,
+    githubBaseBranch,
+    githubCsvFolder,
+    githubRepo,
+    githubRepoInput,
+    githubRuntimeToken,
+    isGithubRepoValid,
+    onGithubTokenChange,
+    repoImportBranch,
+    repoImportPath,
+  ]);
 
   const renderCsvModelFilePicker = useCallback(
     (options: {
@@ -563,9 +592,16 @@ const LocalizationWorkflow = () => {
     () => rows.filter((row) => String(row.status || "").toLowerCase() === "needs qa").length,
     [rows],
   );
-  const blockingErrors = useMemo(
-    () => rows.filter((row) => String(row.status || "").toLowerCase() === "error").length,
-    [rows],
+  const emptyRows = useMemo(
+    () =>
+      rows.filter((row) => {
+        const sourceEmpty = String(row.source || "").trim().length === 0;
+        const allLocaleValuesEmpty =
+          localeColumns.length === 0 ||
+          localeColumns.every((col) => String(row[col.field] || "").trim().length === 0);
+        return sourceEmpty && allLocaleValuesEmpty;
+      }).length,
+    [localeColumns, rows],
   );
   const hasPublishableChanges = useMemo(() => {
     if (!sourceLoaded || rows.length === 0 || localeColumns.length === 0 || baselineRows.length === 0) {
@@ -596,6 +632,7 @@ const LocalizationWorkflow = () => {
     }
     exportCancelRef.current = null;
     setIsExportingXlsx(false);
+    setIsPublishingPr(false);
     setExportProgress(0);
     setExportProgressLabel("");
     setLastExport(null);
@@ -1026,6 +1063,13 @@ const LocalizationWorkflow = () => {
   );
 
   const loadFromRepo = useCallback(async () => {
+    if (!isGithubRepoValid) {
+      const message = "Set a valid repository first (owner/name or URL).";
+      setStatusMessage(message);
+      setLoadSourceError(message);
+      return false;
+    }
+
     const branch = String(repoImportBranch || "").trim();
     const filePath = String(repoImportPath || "").trim();
     if (!branch) {
@@ -1043,7 +1087,7 @@ const LocalizationWorkflow = () => {
 
     const fetched = await fetchRepoFileFromGitHub({
       token: githubToken || undefined,
-      repoFullName: GITHUB_REPO,
+      repoFullName: githubRepo,
       branch,
       filePath,
     });
@@ -1051,10 +1095,10 @@ const LocalizationWorkflow = () => {
     const loaded = await loadFromXlsx(file);
     if (loaded) {
       setLoadSourceError("");
-      setStatusMessage(`Loaded ${fetched.filePath} from ${GITHUB_REPO}@${branch}.`);
+      setStatusMessage(`Loaded ${fetched.filePath} from ${githubRepo}@${branch}.`);
     }
     return loaded;
-  }, [githubToken, loadFromXlsx, repoImportBranch, repoImportPath]);
+  }, [githubRepo, githubToken, isGithubRepoValid, loadFromXlsx, repoImportBranch, repoImportPath]);
 
   const onLoadSource = useCallback(async () => {
     if (isLoadingSource) {
@@ -1206,10 +1250,6 @@ const LocalizationWorkflow = () => {
   }, [csvExportFileName, csvLineEnding, localeColumns, rows]);
 
   const onExportXlsx = useCallback(async () => {
-    if (!validated) {
-      setStatusMessage("Validate grid before export.");
-      return;
-    }
     if (isExportingXlsx) {
       return;
     }
@@ -1220,16 +1260,16 @@ const LocalizationWorkflow = () => {
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "CSV export failed.");
     }
-  }, [isExportingXlsx, runCsvExport, validated]);
+  }, [isExportingXlsx, runCsvExport]);
 
   const detectRepoTargetLineEnding = useCallback(
     async (fileName: string): Promise<"lf" | "crlf"> => {
       try {
-        const targetPath = `${GITHUB_CSV_FOLDER}/${fileName}`;
+        const targetPath = `${githubCsvFolder}/${fileName}`;
         const fetched = await fetchRepoFileFromGitHub({
           token: githubToken || undefined,
-          repoFullName: GITHUB_REPO,
-          branch: GITHUB_BASE_BRANCH,
+          repoFullName: githubRepo,
+          branch: githubBaseBranch,
           filePath: targetPath,
         });
         const bytes = new Uint8Array(fetched.bytes);
@@ -1240,23 +1280,24 @@ const LocalizationWorkflow = () => {
         return csvLineEnding;
       }
     },
-    [csvLineEnding, githubToken],
+    [csvLineEnding, githubBaseBranch, githubCsvFolder, githubRepo, githubToken],
   );
 
   const onOpenPullRequest = useCallback(async () => {
-    if (!validated) {
-      setStatusMessage("Validate grid before publish.");
-      return;
-    }
     if (!hasPublishableChanges) {
       setStatusMessage("No changes detected. Edit data before opening PR.");
       return;
     }
-    if (isExportingXlsx) {
+    if (!isGithubRepoValid) {
+      setStatusMessage("Set a valid repository first (owner/name or URL).");
+      return;
+    }
+    if (isExportingXlsx || isPublishingPr) {
       setStatusMessage("CSV generation is still in progress.");
       return;
     }
 
+    setIsPublishingPr(true);
     try {
       const targetLineEnding = await detectRepoTargetLineEnding(csvExportFileName);
       const csvForPublish = await runCsvExport("publish", { saveToDisk: false, lineEnding: targetLineEnding });
@@ -1271,18 +1312,32 @@ const LocalizationWorkflow = () => {
 
       const published = await publishCsvToGitHub({
         token: githubToken,
-        repoFullName: GITHUB_REPO,
-        baseBranch: GITHUB_BASE_BRANCH,
-        csvFolder: GITHUB_CSV_FOLDER,
+        repoFullName: githubRepo,
+        baseBranch: githubBaseBranch,
+        csvFolder: githubCsvFolder,
         fileName: csvForPublish.fileName,
         csvBytes: csvForPublish.bytes,
       });
       setPrUrl(published.prUrl);
-      setStatusMessage(`PR created on ${GITHUB_REPO}: ${published.prUrl}`);
+      setStatusMessage(`PR created on ${githubRepo}: ${published.prUrl}`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
+    } finally {
+      setIsPublishingPr(false);
     }
-  }, [csvExportFileName, detectRepoTargetLineEnding, githubToken, hasPublishableChanges, isExportingXlsx, runCsvExport, validated]);
+  }, [
+    csvExportFileName,
+    detectRepoTargetLineEnding,
+    githubBaseBranch,
+    githubCsvFolder,
+    githubRepo,
+    githubToken,
+    hasPublishableChanges,
+    isExportingXlsx,
+    isGithubRepoValid,
+    isPublishingPr,
+    runCsvExport,
+  ]);
 
   const onDownloadValidationSummary = useCallback(async () => {
     if (!validationFeedback) {
@@ -1420,12 +1475,12 @@ const LocalizationWorkflow = () => {
         validated,
         exported,
         imported,
+        hasPublishableChanges,
       }),
-    [activeStepIndex, exported, imported, scope, sourceLoaded, validated],
+    [activeStepIndex, exported, hasPublishableChanges, imported, scope, sourceLoaded, validated],
   );
 
   const canContinueExchange =
-    Boolean(validationFeedback?.canProceed) &&
     sourceLoaded &&
     rows.length > 0 &&
     localeColumns.length > 0 &&
@@ -1441,14 +1496,11 @@ const LocalizationWorkflow = () => {
     }
 
     return [
-      { value: `${activeStepIndex + 1}/${steps.length}`, label: "Stage" },
+      { value: String(emptyRows), label: "Empty rows" },
       { value: `${Math.round(coverage * 10) / 10}%`, label: "Coverage" },
-      { value: String(qaWarnings), label: "QA warnings" },
-      { value: String(blockingErrors), label: "Blocking errors" },
-      { value: String(rows.length - blockingErrors - qaWarnings), label: "Validated rows" },
       { value: currentPageSummary, label: "Dataset" },
     ];
-  }, [activeStepIndex, blockingErrors, coverage, currentPageSummary, qaWarnings, rows.length, scope, steps.length]);
+  }, [coverage, currentPageSummary, emptyRows, qaWarnings, scope]);
 
   const onStepSelect = useCallback(
     (index: number) => {
@@ -1649,7 +1701,7 @@ const LocalizationWorkflow = () => {
         <section className="workflow-screen">
           <header className="workflow-screen__header">
             <h2>2) Edit TLK Entries</h2>
-            <p>Edit locale columns, then validate before publish/rebuild.</p>
+            <p>Edit locale columns. Validate is optional before publish/rebuild.</p>
           </header>
           <div className="workflow-actions workflow-actions--editor-tools">
             <button
@@ -1657,6 +1709,7 @@ const LocalizationWorkflow = () => {
               className="workflow-actions__primary"
               onClick={applyQaValidation}
               disabled={!sourceLoaded || rows.length === 0 || localeColumns.length === 0}
+              hidden
             >
               Validate
             </button>
@@ -1752,6 +1805,36 @@ const LocalizationWorkflow = () => {
             <article className="card">
               <h3>GitHub PR</h3>
               <div className="workflow-screen__field">
+                <label htmlFor="publish-repo-name">Repository (owner/name or URL)</label>
+                <input
+                  id="publish-repo-name"
+                  type="text"
+                  value={githubRepoInput}
+                  onChange={(event) => setGithubRepoInput(event.target.value)}
+                  placeholder={DEFAULT_GITHUB_REPO}
+                />
+              </div>
+              <div className="workflow-screen__field">
+                <label htmlFor="publish-branch">Base branch</label>
+                <input
+                  id="publish-branch"
+                  type="text"
+                  value={githubBaseBranchInput}
+                  onChange={(event) => setGithubBaseBranchInput(event.target.value)}
+                  placeholder={DEFAULT_GITHUB_BASE_BRANCH}
+                />
+              </div>
+              <div className="workflow-screen__field">
+                <label htmlFor="publish-csv-folder">CSV folder in repo</label>
+                <input
+                  id="publish-csv-folder"
+                  type="text"
+                  value={githubCsvFolderInput}
+                  onChange={(event) => setGithubCsvFolderInput(event.target.value)}
+                  placeholder={DEFAULT_GITHUB_CSV_FOLDER}
+                />
+              </div>
+              <div className="workflow-screen__field">
                 <label htmlFor="github-pat-token">GitHub PAT (test)</label>
                 <input
                   id="github-pat-token"
@@ -1768,28 +1851,54 @@ const LocalizationWorkflow = () => {
               </div>
               <p className="workflow-screen__hint">
                 Target repo:{" "}
-                <a href={`https://github.com/${GITHUB_REPO}`} target="_blank" rel="noreferrer">
-                  {GITHUB_REPO}
-                </a>
+                {isGithubRepoValid ? (
+                  <a href={`https://github.com/${githubRepo}`} target="_blank" rel="noreferrer">
+                    {githubRepo}
+                  </a>
+                ) : (
+                  <span>Set valid repository first.</span>
+                )}
               </p>
               <p className="workflow-screen__hint">
                 CSV folder:{" "}
-                <a href={GITHUB_CSV_FOLDER_URL} target="_blank" rel="noreferrer">
-                  {`${GITHUB_BASE_BRANCH}/${GITHUB_CSV_FOLDER}`}
-                </a>
+                {isGithubRepoValid ? (
+                  <a href={githubCsvFolderUrl} target="_blank" rel="noreferrer">
+                    {`${githubBaseBranch}/${githubCsvFolder}`}
+                  </a>
+                ) : (
+                  <span>{`${githubBaseBranch}/${githubCsvFolder}`}</span>
+                )}
               </p>
               <div className="workflow-actions">
                 <button
                   type="button"
                   className="workflow-actions__primary"
                   onClick={onOpenPullRequest}
-                  disabled={!validated || isExportingXlsx || !hasPublishableChanges || !githubToken}
+                  disabled={isExportingXlsx || isPublishingPr || !hasPublishableChanges || !githubToken || !isGithubRepoValid}
                 >
-                  Open PR
+                  {isPublishingPr ? "Opening PR..." : "Open PR"}
                 </button>
               </div>
+              {isPublishingPr ? (
+                <div className="workflow-inline-progress" role="status" aria-live="polite">
+                  <span className="workflow-inline-progress__label">
+                    <span className="workflow-inline-progress__spinner" aria-hidden="true" />
+                    {isExportingXlsx && exportRunMode === "publish"
+                      ? `Preparing CSV for PR... ${exportProgressLabel || `${exportProgress}%`}`
+                      : "Waiting for GitHub response..."}
+                  </span>
+                  {isExportingXlsx && exportRunMode === "publish" ? (
+                    <div className="workflow-inline-progress__bar" aria-hidden="true">
+                      <span style={{ width: `${Math.max(0, Math.min(100, exportProgress))}%` }} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {!githubToken ? (
                 <p className="workflow-screen__hint">Paste GitHub PAT to enable Open PR.</p>
+              ) : null}
+              {!isGithubRepoValid ? (
+                <p className="workflow-screen__hint">Provide valid repository in format <code>owner/name</code> or GitHub URL.</p>
               ) : null}
               {!lastExport ? (
                 <p className="workflow-screen__hint">CSV will be prepared automatically for PR (without local download).</p>
@@ -1807,7 +1916,7 @@ const LocalizationWorkflow = () => {
               <h3>Export CSV</h3>
               <p className="workflow-screen__hint">{`Target CSV: ${csvExportFileName}`}</p>
               <div className="workflow-actions">
-                <button type="button" className="workflow-actions__primary" onClick={onExportXlsx} disabled={!validated || isExportingXlsx}>
+                <button type="button" className="workflow-actions__primary" onClick={onExportXlsx} disabled={isExportingXlsx}>
                   {isExportingXlsx && exportRunMode === "generate" ? "Generating CSV..." : "Generate CSV"}
                 </button>
                 {isExportingXlsx ? (

@@ -9,22 +9,24 @@ describe("workflowProgress", () => {
       validated: false,
       exported: false,
       imported: false,
+      hasPublishableChanges: false,
     });
 
     expect(steps).toHaveLength(3);
     expect(steps[0].status).toBe("active");
     expect(steps[1].status).toBe("locked");
     expect(steps[1].canNavigate).toBe(false);
-    expect(steps[1].reason).toContain("Parse & Validate");
+    expect(steps[1].reason).toContain("Load source");
     expect(steps[2].status).toBe("locked");
   });
 
-  it("unlocks publish after validation in exchange scope", () => {
+  it("unlocks publish after source load in exchange scope (validate optional)", () => {
     const steps = computeStepUiStates("exchange", 1, {
       sourceLoaded: true,
-      validated: true,
+      validated: false,
       exported: false,
       imported: false,
+      hasPublishableChanges: true,
     });
 
     expect(steps[0].status).toBe("done");
@@ -39,6 +41,7 @@ describe("workflowProgress", () => {
       validated: false,
       exported: false,
       imported: false,
+      hasPublishableChanges: false,
     });
 
     expect(steps[0].canNavigate).toBe(true);
@@ -52,6 +55,7 @@ describe("workflowProgress", () => {
       validated: false,
       exported: false,
       imported: false,
+      hasPublishableChanges: false,
     });
     expect(locked[1].status).toBe("locked");
     expect(locked[1].reason).toContain("Import approved CSV");
@@ -61,8 +65,23 @@ describe("workflowProgress", () => {
       validated: false,
       exported: false,
       imported: true,
+      hasPublishableChanges: false,
     });
     expect(ready[1].status).toBe("ready");
     expect(ready[1].canNavigate).toBe(true);
+  });
+
+  it("keeps publish locked when source is loaded but no data changes exist", () => {
+    const steps = computeStepUiStates("exchange", 1, {
+      sourceLoaded: true,
+      validated: false,
+      exported: false,
+      imported: false,
+      hasPublishableChanges: false,
+    });
+
+    expect(steps[2].status).toBe("locked");
+    expect(steps[2].canNavigate).toBe(false);
+    expect(steps[2].reason).toContain("No data changes");
   });
 });
