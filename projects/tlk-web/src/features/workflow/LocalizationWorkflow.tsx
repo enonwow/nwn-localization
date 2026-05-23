@@ -17,11 +17,20 @@ import { localeCodeToFieldToken, normalizeLocaleCode, type LocaleColumn, type Pa
 import { applyDialogfFallbacks, validateTlkBundles } from "../../lib/validation";
 import {
   buildTlkRowsFromXlsxRows,
+  computeCsvExportChangeSummary,
   getParsedLocaleColumnsFromRows,
-  hasCsvExportChanges,
   makeCsvFileName,
   parseWorkbookFile,
 } from "../../lib/xlsx";
+import {
+  readSessionValue,
+  removeSessionValue,
+  SESSION_KEY_GITHUB_BASE_BRANCH,
+  SESSION_KEY_GITHUB_CSV_FOLDER,
+  SESSION_KEY_GITHUB_REPO,
+  SESSION_KEY_GITHUB_TOKEN,
+  writeSessionValue,
+} from "../../lib/sessionStorage";
 import { fetchRepoFileFromGitHub, publishCsvToGitHub } from "../../lib/github";
 import { buildZipArchive } from "../../lib/zip";
 import { computeStepUiStates } from "../../lib/workflowProgress";
@@ -346,9 +355,15 @@ const LocalizationWorkflow = () => {
   const [extraXlsxLocales, setExtraXlsxLocales] = useState<string[]>([]);
   const [sourceXlsxFile, setSourceXlsxFile] = useState<File | null>(null);
   const [mergedXlsxFile, setMergedXlsxFile] = useState<File | null>(null);
-  const [githubRepoInput, setGithubRepoInput] = useState(DEFAULT_GITHUB_REPO);
-  const [githubBaseBranchInput, setGithubBaseBranchInput] = useState(DEFAULT_GITHUB_BASE_BRANCH);
-  const [githubCsvFolderInput, setGithubCsvFolderInput] = useState(DEFAULT_GITHUB_CSV_FOLDER);
+  const [githubRepoInput, setGithubRepoInput] = useState(() =>
+    readSessionValue(SESSION_KEY_GITHUB_REPO, DEFAULT_GITHUB_REPO),
+  );
+  const [githubBaseBranchInput, setGithubBaseBranchInput] = useState(() =>
+    readSessionValue(SESSION_KEY_GITHUB_BASE_BRANCH, DEFAULT_GITHUB_BASE_BRANCH),
+  );
+  const [githubCsvFolderInput, setGithubCsvFolderInput] = useState(() =>
+    readSessionValue(SESSION_KEY_GITHUB_CSV_FOLDER, DEFAULT_GITHUB_CSV_FOLDER),
+  );
   const [repoImportBranch, setRepoImportBranch] = useState(DEFAULT_GITHUB_BASE_BRANCH);
   const [repoImportPath, setRepoImportPath] = useState(`${DEFAULT_GITHUB_CSV_FOLDER}/latest-localization.csv`);
   const [rows, setRows] = useState<TlkGridRow[]>([]);
@@ -377,11 +392,8 @@ const LocalizationWorkflow = () => {
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
   const [githubRuntimeToken, setGithubRuntimeToken] = useState(() => {
-    try {
-      return String(window.sessionStorage.getItem("tlkForgeGitHubToken") || "").trim();
-    } catch {
-      return "";
-    }
+    removeSessionValue(SESSION_KEY_GITHUB_TOKEN);
+    return "";
   });
   const [gridApi, setGridApi] = useState<GridApi<TlkGridRow> | null>(null);
   const exportWorkerRef = useRef<Worker | null>(null);
@@ -397,16 +409,19 @@ const LocalizationWorkflow = () => {
   const isGithubRepoValid = githubRepo.length > 0;
   const onGithubTokenChange = useCallback((nextValue: string) => {
     setGithubRuntimeToken(nextValue);
-    try {
-      const normalized = String(nextValue || "").trim();
-      if (normalized) {
-        window.sessionStorage.setItem("tlkForgeGitHubToken", normalized);
-      } else {
-        window.sessionStorage.removeItem("tlkForgeGitHubToken");
-      }
-    } catch {
-      // ignore sessionStorage failures
-    }
+    removeSessionValue(SESSION_KEY_GITHUB_TOKEN);
+  }, []);
+  const onGithubRepoInputChange = useCallback((nextValue: string) => {
+    setGithubRepoInput(nextValue);
+    writeSessionValue(SESSION_KEY_GITHUB_REPO, nextValue);
+  }, []);
+  const onGithubBaseBranchInputChange = useCallback((nextValue: string) => {
+    setGithubBaseBranchInput(nextValue);
+    writeSessionValue(SESSION_KEY_GITHUB_BASE_BRANCH, nextValue);
+  }, []);
+  const onGithubCsvFolderInputChange = useCallback((nextValue: string) => {
+    setGithubCsvFolderInput(nextValue);
+    writeSessionValue(SESSION_KEY_GITHUB_CSV_FOLDER, nextValue);
   }, []);
 
   const onCsvPickerDragOver = useCallback((event: React.DragEvent<HTMLElement>, dropKey: string) => {
@@ -463,7 +478,7 @@ const LocalizationWorkflow = () => {
           id="repo-name"
           type="text"
           value={githubRepoInput}
-          onChange={(event) => setGithubRepoInput(event.target.value)}
+          onChange={(event) => onGithubRepoInputChange(event.target.value)}
           placeholder={DEFAULT_GITHUB_REPO}
         />
       </div>
@@ -603,16 +618,26 @@ const LocalizationWorkflow = () => {
       }).length,
     [localeColumns, rows],
   );
-  const hasPublishableChanges = useMemo(() => {
+  const changeSummary = useMemo(() => {
     if (!sourceLoaded || rows.length === 0 || localeColumns.length === 0 || baselineRows.length === 0) {
-      return false;
+      return {
+        changedRows: 0,
+        changedCells: 0,
+        addedRows: 0,
+        removedRows: 0,
+        sourceChangedRows: 0,
+        changedRowStrRefs: [] as number[],
+        touchedLocales: [] as string[],
+      };
     }
-    return hasCsvExportChanges({
+    return computeCsvExportChangeSummary({
       baselineRows,
       currentRows: rows,
       localeColumns,
     });
   }, [baselineRows, localeColumns, rows, sourceLoaded]);
+
+  const hasPublishableChanges = changeSummary.changedRows > 0;
 
   const resetFlowState = useCallback(() => {
     setRows([]);
@@ -665,6 +690,45 @@ const LocalizationWorkflow = () => {
     setLastExport(null);
     setValidationFeedback(null);
   }, []);
+
+  const onAddGridRow = useCallback(() => {
+    let createdStrRef: number | null = null;
+    setRows((prevRows) => {
+      const maxStrRef = prevRows.reduce((max, row) => {
+        const value = Number(row.strRef);
+        if (!Number.isFinite(value)) return max;
+        return Math.max(max, value);
+      }, -1);
+      const nextStrRef = maxStrRef + 1;
+      createdStrRef = nextStrRef;
+
+      const nextRow: TlkGridRow = {
+        id: nextStrRef,
+        strRef: nextStrRef,
+        sourceEn: "",
+        context: "",
+        status: "Draft",
+      };
+
+      for (let i = 0; i < localeColumns.length; i += 1) {
+        const col = localeColumns[i];
+        nextRow[col.field] = "";
+      }
+
+      return [...prevRows, nextRow];
+    });
+    setValidated(false);
+    setExported(false);
+    setBuilt(false);
+    setLastExport(null);
+    setValidationFeedback(null);
+    if (createdStrRef != null) {
+      setStatusMessage(`Added new row StrRef ${createdStrRef}.`);
+    } else {
+      setStatusMessage("Added new row.");
+    }
+    return createdStrRef;
+  }, [localeColumns]);
 
   const onGridApiReady = useCallback((api: GridApi<TlkGridRow>) => {
     setGridApi(api);
@@ -1785,9 +1849,11 @@ const LocalizationWorkflow = () => {
             <LocalizationGrid
               rows={rows}
               localeColumns={localeColumns}
+              changedStrRefs={changeSummary.changedRowStrRefs}
               pageSize={pageSize}
               onPageSizeChange={setPageSize}
               onRowsChange={onGridRowsChange}
+              onAddRow={onAddGridRow}
               onGridApiReady={onGridApiReady}
               onUndo={onUndo}
               onRedo={onRedo}
@@ -1801,6 +1867,40 @@ const LocalizationWorkflow = () => {
           <header className="workflow-screen__header">
             <h2>3) Publish</h2>
           </header>
+          <article className="card workflow-change-summary">
+            <h3>Change Summary</h3>
+            <div className="workflow-change-summary__grid">
+              <div>
+                <b>{changeSummary.changedRows}</b>
+                <small>Changed rows</small>
+              </div>
+              <div>
+                <b>{changeSummary.changedCells}</b>
+                <small>Changed cells</small>
+              </div>
+              <div>
+                <b>{changeSummary.addedRows}</b>
+                <small>Added rows</small>
+              </div>
+              <div>
+                <b>{changeSummary.removedRows}</b>
+                <small>Removed rows</small>
+              </div>
+              <div>
+                <b>{changeSummary.sourceChangedRows}</b>
+                <small>Source EN updates</small>
+              </div>
+              <div>
+                <b>{changeSummary.touchedLocales.length}</b>
+                <small>Locales touched</small>
+              </div>
+            </div>
+            {changeSummary.touchedLocales.length > 0 ? (
+              <p className="workflow-screen__hint">{`Locales: ${changeSummary.touchedLocales.join(", ")}`}</p>
+            ) : (
+              <p className="workflow-screen__hint">No data changes detected yet.</p>
+            )}
+          </article>
           <div className="grid-2">
             <article className="card">
               <h3>GitHub PR</h3>
@@ -1810,7 +1910,7 @@ const LocalizationWorkflow = () => {
                   id="publish-repo-name"
                   type="text"
                   value={githubRepoInput}
-                  onChange={(event) => setGithubRepoInput(event.target.value)}
+                  onChange={(event) => onGithubRepoInputChange(event.target.value)}
                   placeholder={DEFAULT_GITHUB_REPO}
                 />
               </div>
@@ -1820,7 +1920,7 @@ const LocalizationWorkflow = () => {
                   id="publish-branch"
                   type="text"
                   value={githubBaseBranchInput}
-                  onChange={(event) => setGithubBaseBranchInput(event.target.value)}
+                  onChange={(event) => onGithubBaseBranchInputChange(event.target.value)}
                   placeholder={DEFAULT_GITHUB_BASE_BRANCH}
                 />
               </div>
@@ -1830,7 +1930,7 @@ const LocalizationWorkflow = () => {
                   id="publish-csv-folder"
                   type="text"
                   value={githubCsvFolderInput}
-                  onChange={(event) => setGithubCsvFolderInput(event.target.value)}
+                  onChange={(event) => onGithubCsvFolderInputChange(event.target.value)}
                   placeholder={DEFAULT_GITHUB_CSV_FOLDER}
                 />
               </div>

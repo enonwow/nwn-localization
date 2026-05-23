@@ -202,6 +202,34 @@
   margin: 0 0 0.45rem;
 }
 
+.workflow-change-summary {
+  margin-bottom: 0.75rem;
+}
+
+.workflow-change-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.workflow-change-summary__grid > div {
+  border: 1px solid #355d86;
+  border-radius: 0.55rem;
+  background: #102741;
+  padding: 0.45rem 0.55rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.workflow-change-summary__grid > div b {
+  color: #f0f6ff;
+  font-size: 1rem;
+}
+
+.workflow-change-summary__grid > div small {
+  color: #a8bfd8;
+}
+
 .workflow-screen__header h2 {
   margin: 0;
 }
@@ -958,6 +986,40 @@
   color: #8fa8c3;
 }
 
+.workflow-grid__shortcuts {
+  border: 1px solid #2d4d71;
+  background: #102741;
+  border-radius: 0.62rem;
+  padding: 0.55rem 0.65rem;
+  color: #d3e4f6;
+}
+
+.workflow-grid__shortcuts h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+  color: #edf5ff;
+}
+
+.workflow-grid__shortcuts ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.workflow-grid__shortcuts li {
+  font-size: 0.82rem;
+  color: #c1d6ec;
+}
+
+.workflow-grid__shortcuts code {
+  color: #f6fbff;
+  background: #173754;
+  border: 1px solid #2f567e;
+  border-radius: 0.35rem;
+  padding: 0.08rem 0.3rem;
+}
+
 .diff-report {
   margin-top: 0.8rem;
   border: 1px solid #335272;
@@ -1002,6 +1064,10 @@
 
   .grid-2 {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-change-summary__grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .workflow-kpis {

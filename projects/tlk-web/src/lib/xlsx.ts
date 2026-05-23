@@ -163,45 +163,141 @@ export interface CsvExportChangeInput {
   localeColumns: readonly LocaleColumn[];
 }
 
-export function hasCsvExportChanges(input: CsvExportChangeInput): boolean {
-  if (input.baselineRows.length !== input.currentRows.length) {
-    return true;
-  }
+export interface CsvExportChangeSummary {
+  changedRows: number;
+  changedCells: number;
+  addedRows: number;
+  removedRows: number;
+  sourceChangedRows: number;
+  changedRowStrRefs: number[];
+  touchedLocales: string[];
+}
 
+export function computeCsvExportChangeSummary(input: CsvExportChangeInput): CsvExportChangeSummary {
   const baselineByStrRef = new Map<number, TlkGridRow>();
+  const currentByStrRef = new Map<number, TlkGridRow>();
+  const touchedLocales = new Set<string>();
+  const changedRowStrRefs: number[] = [];
+
   for (let i = 0; i < input.baselineRows.length; i += 1) {
     const row = input.baselineRows[i];
     baselineByStrRef.set(Number(row.strRef), row);
   }
 
   for (let i = 0; i < input.currentRows.length; i += 1) {
-    const currentRow = input.currentRows[i];
-    const strRef = Number(currentRow.strRef);
+    const row = input.currentRows[i];
+    currentByStrRef.set(Number(row.strRef), row);
+  }
+
+  let changedRows = 0;
+  let changedCells = 0;
+  let addedRows = 0;
+  let removedRows = 0;
+  let sourceChangedRows = 0;
+
+  const allStrRefs = new Set<number>([
+    ...baselineByStrRef.keys(),
+    ...currentByStrRef.keys(),
+  ]);
+
+  allStrRefs.forEach((strRef) => {
     const baselineRow = baselineByStrRef.get(strRef);
-    if (!baselineRow) {
-      return true;
+    const currentRow = currentByStrRef.get(strRef);
+
+    if (!baselineRow && currentRow) {
+      addedRows += 1;
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+      const sourceValue = sanitizeSheetCell(currentRow.sourceEn);
+      if (sourceValue.length > 0) {
+        sourceChangedRows += 1;
+        changedCells += 1;
+      }
+      for (let i = 0; i < input.localeColumns.length; i += 1) {
+        const col = input.localeColumns[i];
+        const value = sanitizeSheetCell(currentRow[col.field]);
+        if (value.length > 0) {
+          touchedLocales.add(col.title);
+          changedCells += 1;
+        }
+      }
+      return;
     }
 
-    if (sanitizeSheetCell(currentRow.sourceEn) !== sanitizeSheetCell(baselineRow.sourceEn)) {
-      return true;
+    if (baselineRow && !currentRow) {
+      removedRows += 1;
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+      const sourceValue = sanitizeSheetCell(baselineRow.sourceEn);
+      if (sourceValue.length > 0) {
+        sourceChangedRows += 1;
+        changedCells += 1;
+      }
+      for (let i = 0; i < input.localeColumns.length; i += 1) {
+        const col = input.localeColumns[i];
+        const value = sanitizeSheetCell(baselineRow[col.field]);
+        if (value.length > 0) {
+          touchedLocales.add(col.title);
+          changedCells += 1;
+        }
+      }
+      return;
     }
 
-    for (let j = 0; j < input.localeColumns.length; j += 1) {
-      const col = input.localeColumns[j];
+    if (!baselineRow || !currentRow) {
+      return;
+    }
+
+    let rowChanged = false;
+    const baselineSource = sanitizeSheetCell(baselineRow.sourceEn);
+    const currentSource = sanitizeSheetCell(currentRow.sourceEn);
+    if (baselineSource !== currentSource) {
+      rowChanged = true;
+      sourceChangedRows += 1;
+      changedCells += 1;
+    }
+
+    for (let i = 0; i < input.localeColumns.length; i += 1) {
+      const col = input.localeColumns[i];
       const currentHasField = Object.prototype.hasOwnProperty.call(currentRow, col.field);
       const baselineHasField = Object.prototype.hasOwnProperty.call(baselineRow, col.field);
       if (currentHasField !== baselineHasField) {
-        return true;
+        rowChanged = true;
+        touchedLocales.add(col.title);
+        changedCells += 1;
+        continue;
       }
-      if (sanitizeSheetCell(currentRow[col.field]) !== sanitizeSheetCell(baselineRow[col.field])) {
-        return true;
+
+      const baselineValue = sanitizeSheetCell(baselineRow[col.field]);
+      const currentValue = sanitizeSheetCell(currentRow[col.field]);
+      if (baselineValue !== currentValue) {
+        rowChanged = true;
+        touchedLocales.add(col.title);
+        changedCells += 1;
       }
     }
 
-    baselineByStrRef.delete(strRef);
-  }
+    if (rowChanged) {
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+    }
+  });
 
-  return baselineByStrRef.size > 0;
+  changedRowStrRefs.sort((a, b) => a - b);
+
+  return {
+    changedRows,
+    changedCells,
+    addedRows,
+    removedRows,
+    sourceChangedRows,
+    changedRowStrRefs,
+    touchedLocales: Array.from(touchedLocales).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+export function hasCsvExportChanges(input: CsvExportChangeInput): boolean {
+  return computeCsvExportChangeSummary(input).changedRows > 0;
 }
 
 export function makeXlsxFileName(): string {

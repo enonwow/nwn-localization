@@ -16,9 +16,11 @@ import "ag-grid-community/styles/ag-theme-quartz.css";
 type LocalizationGridProps = {
   rows: TlkGridRow[];
   localeColumns: LocaleColumn[];
+  changedStrRefs?: readonly number[];
   pageSize: number;
   onPageSizeChange: (nextPageSize: number) => void;
   onRowsChange: (rows: TlkGridRow[]) => void;
+  onAddRow?: () => number | null;
   onGridApiReady?: (api: GridApi<TlkGridRow>) => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -42,9 +44,11 @@ const COLUMN_WIDTH_PRESETS: Record<
 const LocalizationGrid = ({
   rows,
   localeColumns,
+  changedStrRefs = [],
   pageSize,
   onPageSizeChange,
   onRowsChange,
+  onAddRow,
   onGridApiReady,
   onUndo,
   onRedo,
@@ -54,15 +58,18 @@ const LocalizationGrid = ({
   const [visibleRowsInfo, setVisibleRowsInfo] = useState("Visible 0 / 0");
   const [searchText, setSearchText] = useState("");
   const [notEmptyOnly, setNotEmptyOnly] = useState(false);
+  const [changedOnly, setChangedOnly] = useState(false);
   const [missingOnly, setMissingOnly] = useState(false);
   const [needsQaOnly, setNeedsQaOnly] = useState(false);
   const [errorsOnly, setErrorsOnly] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [gridHeight, setGridHeight] = useState(DEFAULT_GRID_HEIGHT);
   const [gridHeightDraft, setGridHeightDraft] = useState(String(DEFAULT_GRID_HEIGHT));
   const [gridHeightError, setGridHeightError] = useState("");
   const [columnWidthPreset, setColumnWidthPreset] = useState<ColumnWidthPreset>(DEFAULT_COLUMN_WIDTH_PRESET);
   const [columnWidthError, setColumnWidthError] = useState("");
   const gridResizeRef = useRef<HTMLDivElement | null>(null);
+  const changedStrRefSet = useMemo(() => new Set(changedStrRefs.map((value) => Number(value))), [changedStrRefs]);
 
   const columnDefs = useMemo<ColDef<TlkGridRow>[]>(() => {
     const localeDefs: ColDef<TlkGridRow>[] = localeColumns.map((col) => ({
@@ -141,7 +148,7 @@ const LocalizationGrid = ({
     if (!gridApi) return;
     gridApi.onFilterChanged();
     updatePaging();
-  }, [errorsOnly, gridApi, missingOnly, needsQaOnly, notEmptyOnly, updatePaging]);
+  }, [changedOnly, errorsOnly, gridApi, missingOnly, needsQaOnly, notEmptyOnly, updatePaging]);
 
   useEffect(() => {
     const host = gridResizeRef.current;
@@ -204,9 +211,80 @@ const LocalizationGrid = ({
     applyColumnWidthPreset(columnWidthPreset);
   }, [applyColumnWidthPreset, columnWidthPreset, columnDefs, gridApi]);
 
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      const tag = String(element.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      return element.isContentEditable;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const ctrlOrMeta = event.ctrlKey || event.metaKey;
+      const lower = event.key.toLowerCase();
+
+      if (event.key === "Escape" && showShortcuts) {
+        event.preventDefault();
+        setShowShortcuts(false);
+        return;
+      }
+
+      if (ctrlOrMeta && lower === "z" && !event.shiftKey && onUndo) {
+        event.preventDefault();
+        onUndo();
+        return;
+      }
+
+      if (ctrlOrMeta && ((lower === "y") || (lower === "z" && event.shiftKey)) && onRedo) {
+        event.preventDefault();
+        onRedo();
+        return;
+      }
+
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === "?") {
+        event.preventDefault();
+        setShowShortcuts((prev) => !prev);
+        return;
+      }
+
+      if (event.altKey && lower === "1") {
+        event.preventDefault();
+        setNotEmptyOnly((prev) => !prev);
+        return;
+      }
+      if (event.altKey && lower === "2") {
+        event.preventDefault();
+        setMissingOnly((prev) => !prev);
+        return;
+      }
+      if (event.altKey && lower === "3") {
+        event.preventDefault();
+        setNeedsQaOnly((prev) => !prev);
+        return;
+      }
+      if (event.altKey && lower === "4") {
+        event.preventDefault();
+        setErrorsOnly((prev) => !prev);
+        return;
+      }
+      if (event.altKey && lower === "5") {
+        event.preventDefault();
+        setChangedOnly((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onRedo, onUndo, showShortcuts]);
+
   const isExternalFilterPresent = useCallback(() => {
-    return notEmptyOnly || missingOnly || needsQaOnly || errorsOnly;
-  }, [errorsOnly, missingOnly, needsQaOnly, notEmptyOnly]);
+    return notEmptyOnly || changedOnly || missingOnly || needsQaOnly || errorsOnly;
+  }, [changedOnly, errorsOnly, missingOnly, needsQaOnly, notEmptyOnly]);
 
   const doesExternalFilterPass = useCallback(
     (node: IRowNode<TlkGridRow>) => {
@@ -218,18 +296,20 @@ const LocalizationGrid = ({
       const status = String(row.status || "").toLowerCase();
 
       if (notEmptyOnly && !hasValue) return false;
+      if (changedOnly && !changedStrRefSet.has(Number(row.strRef))) return false;
       if (missingOnly && !hasMissing) return false;
       if (needsQaOnly && status !== "needs qa") return false;
       if (errorsOnly && status !== "error") return false;
 
       return true;
     },
-    [errorsOnly, localeColumns, missingOnly, needsQaOnly, notEmptyOnly],
+    [changedOnly, changedStrRefSet, errorsOnly, localeColumns, missingOnly, needsQaOnly, notEmptyOnly],
   );
 
   const resetQuickFilters = useCallback(() => {
     setSearchText("");
     setNotEmptyOnly(false);
+    setChangedOnly(false);
     setMissingOnly(false);
     setNeedsQaOnly(false);
     setErrorsOnly(false);
@@ -239,6 +319,26 @@ const LocalizationGrid = ({
     resetQuickFilters();
     resetColumnWidths();
   }, [resetColumnWidths, resetQuickFilters]);
+
+  const handleAddRow = useCallback(() => {
+    const createdStrRef = onAddRow?.();
+    if (!gridApi || createdStrRef == null) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      gridApi.paginationGoToLastPage();
+      updatePaging();
+
+      const displayedCount = gridApi.getDisplayedRowCount();
+      if (displayedCount <= 0) return;
+
+      const targetIndex = displayedCount - 1;
+      gridApi.ensureIndexVisible(targetIndex, "bottom");
+      const node = gridApi.getDisplayedRowAtIndex(targetIndex);
+      node?.setSelected(true);
+    });
+  }, [gridApi, onAddRow, updatePaging]);
 
   const applyGridHeightDraft = useCallback(() => {
     const normalized = gridHeightDraft.trim();
@@ -346,6 +446,15 @@ const LocalizationGrid = ({
               </button>
               <button
                 type="button"
+                aria-pressed={changedOnly}
+                className={`workflow-grid__chip ${changedOnly ? "workflow-grid__chip--active" : ""}`}
+                onClick={() => setChangedOnly((prev) => !prev)}
+                disabled={changedStrRefs.length === 0}
+              >
+                Review Changes Only
+              </button>
+              <button
+                type="button"
                 aria-pressed={missingOnly}
                 className={`workflow-grid__chip ${missingOnly ? "workflow-grid__chip--active" : ""}`}
                 onClick={() => setMissingOnly((prev) => !prev)}
@@ -378,6 +487,14 @@ const LocalizationGrid = ({
               <button
                 type="button"
                 className="workflow-grid__toolbar-action"
+                onClick={handleAddRow}
+                disabled={!onAddRow}
+              >
+                Add Row
+              </button>
+              <button
+                type="button"
+                className="workflow-grid__toolbar-action"
                 onClick={() => onUndo?.()}
                 disabled={!onUndo}
               >
@@ -395,11 +512,37 @@ const LocalizationGrid = ({
             <div className="workflow-grid__toolbar-status">
               {gridHeightError ? <small className="workflow-grid__toolbar-error">{gridHeightError}</small> : null}
               {columnWidthError ? <small className="workflow-grid__toolbar-error">{columnWidthError}</small> : null}
+              <button
+                type="button"
+                className="workflow-grid__toolbar-action workflow-grid__toolbar-action--compact"
+                onClick={() => setShowShortcuts((prev) => !prev)}
+                aria-expanded={showShortcuts}
+                aria-controls="workflow-grid-shortcuts"
+                title="Show shortcuts"
+              >
+                ?
+              </button>
               <span className="workflow-grid__meta">{`${visibleRowsInfo} | ${pagingInfo}`}</span>
             </div>
           </div>
         </div>
       </header>
+      {showShortcuts ? (
+        <aside id="workflow-grid-shortcuts" className="workflow-grid__shortcuts" aria-live="polite">
+          <h4>Keyboard Shortcuts</h4>
+          <ul>
+            <li><code>Ctrl/Cmd + Z</code> Undo</li>
+            <li><code>Ctrl/Cmd + Y</code> or <code>Ctrl/Cmd + Shift + Z</code> Redo</li>
+            <li><code>?</code> Toggle this help</li>
+            <li><code>Alt + 1</code> Not Empty</li>
+            <li><code>Alt + 2</code> Missing Translations</li>
+            <li><code>Alt + 3</code> Needs QA</li>
+            <li><code>Alt + 4</code> Errors</li>
+            <li><code>Alt + 5</code> Review Changes Only</li>
+            <li><code>Esc</code> Close this help</li>
+          </ul>
+        </aside>
+      ) : null}
       <div className="workflow-grid__resizable" ref={gridResizeRef} style={{ height: `${gridHeight}px` }}>
         <div className="ag-theme-quartz workflow-grid__canvas">
           <AgGridReact
@@ -408,6 +551,7 @@ const LocalizationGrid = ({
             defaultColDef={defaultColDef}
             pagination
             paginationPageSize={pageSize}
+            paginationPageSizeSelector={false}
             undoRedoCellEditing
             undoRedoCellEditingLimit={100}
             rowSelection="multiple"

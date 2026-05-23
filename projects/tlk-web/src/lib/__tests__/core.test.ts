@@ -26,6 +26,7 @@ import {
   buildXlsxAoaForExport,
   buildXlsxHeaderForExport,
   buildTlkRowsFromXlsxRows,
+  computeCsvExportChangeSummary,
   buildXlsxRowsForExport,
   getParsedLocaleColumnsFromRows,
   hasCsvExportChanges,
@@ -310,6 +311,35 @@ describe("XLSX mapping and runtime", () => {
         localeColumns,
       }),
     ).toBe(false);
+  });
+
+  it("computes change summary for CSV export", () => {
+    const localeColumns: LocaleColumn[] = [
+      { field: "loc_en", title: "EN", locale: "EN", variant: "dialog" },
+      { field: "loc_pl", title: "PL", locale: "PL", variant: "dialog" },
+    ];
+    const baseline: TlkGridRow[] = [
+      { id: 0, strRef: 0, sourceEn: "Hello", context: "", status: "Draft", loc_en: "Hello", loc_pl: "Czesc" },
+      { id: 1, strRef: 1, sourceEn: "World", context: "", status: "Draft", loc_en: "World", loc_pl: "Swiat" },
+    ];
+    const current: TlkGridRow[] = [
+      { id: 0, strRef: 0, sourceEn: "Hello!", context: "", status: "Draft", loc_en: "Hello", loc_pl: "Czesc" },
+      { id: 2, strRef: 2, sourceEn: "New", context: "", status: "Draft", loc_en: "New", loc_pl: "" },
+    ];
+
+    const summary = computeCsvExportChangeSummary({
+      baselineRows: baseline,
+      currentRows: current,
+      localeColumns,
+    });
+
+    expect(summary.changedRows).toBe(3);
+    expect(summary.addedRows).toBe(1);
+    expect(summary.removedRows).toBe(1);
+    expect(summary.sourceChangedRows).toBe(3);
+    expect(summary.changedCells).toBeGreaterThanOrEqual(3);
+    expect(summary.touchedLocales).toContain("EN");
+    expect(summary.changedRowStrRefs).toEqual([0, 1, 2]);
   });
 
   it("treats row count mismatch as publishable change", () => {
