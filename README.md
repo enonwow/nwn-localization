@@ -46,6 +46,26 @@
 - Dev: `npm run dev`
 - Build: `npm run build`
 
+## Local Stack (Global Docker Compose)
+
+- One global stack is available at repo root: `docker-compose.yml`.
+- Purpose: local TLK Web + HTTPS reverse-proxy + translation engine with custom host ports.
+- Copy env template in repo root:
+  - `copy .env.example .env`
+- Set your ports in root `.env`:
+  - `TLK_WEB_HOST_PORT=9070`
+  - `LT_HOST_HTTP_PORT=9080`
+  - `LT_HOST_HTTPS_PORT=9443`
+- Start from repo root:
+  - `docker compose up -d`
+- Start selected services only:
+  - `docker compose up -d tlk-web`
+  - `docker compose up -d translation-engine translation-proxy`
+- Endpoints:
+  - TLK Web: `http://localhost:<TLK_WEB_HOST_PORT>`
+  - HTTP: `http://localhost:<LT_HOST_HTTP_PORT>`
+  - HTTPS: `https://localhost:<LT_HOST_HTTPS_PORT>`
+
 ## Publish Target Config (GitHub PR + CSV folder)
 
 - Copy `projects/tlk-web/.env.example` to `projects/tlk-web/.env` and adjust if needed.
