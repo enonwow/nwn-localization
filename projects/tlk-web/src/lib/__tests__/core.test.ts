@@ -79,6 +79,24 @@ describe("TLK core", () => {
     expect(parsed.rows[1]).toBe("World");
   });
 
+  it("encodes Polish TLK text as Windows-1250 bytes (not UTF-8)", () => {
+    const rows: TlkGridRow[] = [
+      { id: 0, strRef: 0, sourceEn: "", context: "", status: "Draft", loc_pl: "Zażółć gęślą jaźń" },
+    ];
+    const bytes = buildSingleTlkBinaryFromColumn(rows, "loc_pl", 5);
+    const parsed = parseSingleTlkBuffer(bytes, "dialog_pl.tlk");
+    expect(parsed.rows[0]).toBe("Zażółć gęślą jaźń");
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const stringBlobOffset = view.getUint32(16, true);
+    const textLength = view.getUint32(20 + 32, true);
+    const textBytes = bytes.slice(stringBlobOffset, stringBlobOffset + textLength);
+
+    // 'ł' should be a single CP1250 byte 0xB3, not UTF-8 sequence C5 82.
+    expect(Array.from(textBytes)).toContain(0xb3);
+    expect(Array.from(textBytes)).not.toEqual(expect.arrayContaining([0xc5, 0x82]));
+  });
+
   it("handles empty TLK text entries", () => {
     const rows: TlkGridRow[] = [
       { id: 0, strRef: 0, sourceEn: "", context: "", status: "Draft", loc_en: "" },
@@ -88,6 +106,21 @@ describe("TLK core", () => {
     const parsed = parseSingleTlkBuffer(bytes, "dialog_en.tlk");
     expect(parsed.rows[0]).toBe("");
     expect(parsed.rows[1]).toBe("X");
+  });
+
+  it("maps TLK entries by StrRef instead of grid order", () => {
+    const rows: TlkGridRow[] = [
+      { id: 40, strRef: 40, sourceEn: "", context: "", status: "Draft", loc_en: "Forty" },
+      { id: 2, strRef: 2, sourceEn: "", context: "", status: "Draft", loc_en: "Two" },
+      { id: 41, strRef: 41, sourceEn: "", context: "", status: "Draft", loc_en: "FortyOne" },
+    ];
+    const bytes = buildSingleTlkBinaryFromColumn(rows, "loc_en", 0);
+    const parsed = parseSingleTlkBuffer(bytes, "dialog_en.tlk");
+
+    expect(parsed.entryCount).toBe(42);
+    expect(parsed.rows[2]).toBe("Two");
+    expect(parsed.rows[40]).toBe("Forty");
+    expect(parsed.rows[41]).toBe("FortyOne");
   });
 
   it("throws when TLK buffer is too small", () => {
@@ -193,8 +226,6 @@ describe("XLSX mapping and runtime", () => {
     ];
     expect(buildXlsxHeaderForExport(localeColumns)).toEqual([
       "StrRef",
-      "Source_EN",
-      "Status",
       "EN",
       "PL_F",
       "DE_XLS",
@@ -221,14 +252,12 @@ describe("XLSX mapping and runtime", () => {
     ];
 
     const aoa = buildXlsxAoaForExport(rows, localeColumns);
-    expect(aoa[0]).toEqual(["StrRef", "Source_EN", "Status", "EN", "PL_F", "DE_XLS"]);
-    expect(aoa[1]).toEqual([1001, "Hello", "Draft", "Hello", "Witaj", "Hallo"]);
+    expect(aoa[0]).toEqual(["StrRef", "EN", "PL_F", "DE_XLS"]);
+    expect(aoa[1]).toEqual([1001, "Hello", "Witaj", "Hallo"]);
 
     const objectRows = buildXlsxRowsForExport(rows, localeColumns);
     expect(objectRows[0]).toEqual({
       StrRef: 1001,
-      Source_EN: "Hello",
-      Status: "Draft",
       EN: "Hello",
       PL_F: "Witaj",
       DE_XLS: "Hallo",
@@ -388,9 +417,11 @@ describe("XLSX mapping and runtime", () => {
   });
 
   it("parses workbook file through runtime adapter", async () => {
+    const readSpy = vi.fn(() => ({ SheetNames: ["Sheet1"], Sheets: { Sheet1: {} } }));
+    const toJsonSpy = vi.fn(() => [{ StrRef: 1, Source_EN: "A" }]);
     const runtime = {
-      read: () => ({ SheetNames: ["Sheet1"], Sheets: { Sheet1: {} } }),
-      utils: { sheet_to_json: () => [{ StrRef: 1, Source_EN: "A" }] },
+      read: readSpy,
+      utils: { sheet_to_json: toJsonSpy },
     };
     const file = {
       name: "sample.xlsx",
@@ -400,6 +431,14 @@ describe("XLSX mapping and runtime", () => {
     const parsed = await parseWorkbookFile(file, runtime);
     expect(parsed.sheetName).toBe("Sheet1");
     expect(parsed.rows).toHaveLength(1);
+    expect(readSpy).toHaveBeenCalledWith(
+      expect.any(ArrayBuffer),
+      expect.objectContaining({ type: "array", raw: true, cellDates: false }),
+    );
+    expect(toJsonSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ raw: true, defval: "", blankrows: false }),
+    );
   });
 
   it("throws for invalid workbook runtime states", async () => {
@@ -423,7 +462,7 @@ describe("XLSX mapping and runtime", () => {
   });
 
   it("validates xlsx schema happy path", () => {
-    const result = validateXlsxSchema([{ StrRef: 1, Source_EN: "X", loc_en: "X" }], "sheet");
+    const result = validateXlsxSchema([{ StrRef: 1, loc_en: "X" }], "sheet");
     expect(result.ok).toBe(true);
   });
 
@@ -439,7 +478,7 @@ describe("XLSX mapping and runtime", () => {
     expect(bad.issues.some((i) => i.message.includes("invalid StrRef"))).toBe(true);
     expect(bad.issues.some((i) => i.message.includes("duplicate locale columns"))).toBe(true);
 
-    const noLocale = validateXlsxSchema([{ StrRef: 1, Source_EN: "A" }], "sheet");
+    const noLocale = validateXlsxSchema([{ StrRef: 1 }], "sheet");
     expect(noLocale.issues.some((i) => i.severity === "warning")).toBe(true);
   });
 });
@@ -520,7 +559,7 @@ describe("GitHub publish", () => {
 
   it("downloads CSV from repository branch", async () => {
     const originalFetch = globalThis.fetch;
-    const csvText = "StrRef,Source_EN,Status\r\n1,Hello,Draft";
+    const csvText = "StrRef,EN,PL\r\n1,Hello,Czesc";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/contents/csv-latest/dialog_en.csv?ref=main")) {

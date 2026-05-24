@@ -38,8 +38,7 @@ describe("xlsx export performance smoke", () => {
     const elapsedMs = Date.now() - start;
 
     expect(aoa.length).toBe(rowCount + 1);
-    expect(aoa[0].length).toBe(7);
+    expect(aoa[0].length).toBe(localeColumns.length + 1);
     expect(elapsedMs).toBeLessThan(maxMs);
   });
 });
-

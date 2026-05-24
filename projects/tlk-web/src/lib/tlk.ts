@@ -30,6 +30,61 @@ const TLK_LANGUAGE_TO_ENCODING: Record<number, string> = {
   5: "windows-1250"
 };
 
+export function tlkEncodingForLanguageId(languageId: number): string {
+  return TLK_LANGUAGE_TO_ENCODING[Number(languageId) || 0] || "windows-1252";
+}
+
+const WINDOWS_1252_EXTRA_ENCODE_MAP: Readonly<Record<string, number>> = {
+  "€": 0x80,
+  "‚": 0x82,
+  "ƒ": 0x83,
+  "„": 0x84,
+  "…": 0x85,
+  "†": 0x86,
+  "‡": 0x87,
+  "ˆ": 0x88,
+  "‰": 0x89,
+  "Š": 0x8a,
+  "‹": 0x8b,
+  "Œ": 0x8c,
+  "Ž": 0x8e,
+  "‘": 0x91,
+  "’": 0x92,
+  "“": 0x93,
+  "”": 0x94,
+  "•": 0x95,
+  "–": 0x96,
+  "—": 0x97,
+  "˜": 0x98,
+  "™": 0x99,
+  "š": 0x9a,
+  "›": 0x9b,
+  "œ": 0x9c,
+  "ž": 0x9e,
+  "Ÿ": 0x9f,
+};
+
+const WINDOWS_1250_POLISH_ENCODE_MAP: Readonly<Record<string, number>> = {
+  "Ś": 0x8c,
+  "Ź": 0x8f,
+  "ś": 0x9c,
+  "ź": 0x9f,
+  "Ł": 0xa3,
+  "Ą": 0xa5,
+  "Ż": 0xaf,
+  "ł": 0xb3,
+  "ą": 0xb9,
+  "ż": 0xbf,
+  "Ć": 0xc6,
+  "Ę": 0xca,
+  "Ń": 0xd1,
+  "Ó": 0xd3,
+  "ć": 0xe6,
+  "ę": 0xea,
+  "ń": 0xf1,
+  "ó": 0xf3,
+};
+
 function asArrayBuffer(bufferLike: ArrayBuffer | ArrayBufferView): ArrayBuffer {
   if (bufferLike instanceof ArrayBuffer) return bufferLike;
   const view = new Uint8Array(bufferLike.buffer, bufferLike.byteOffset, bufferLike.byteLength);
@@ -92,6 +147,40 @@ export function safeFileNameFromPath(value: string): string {
 export function sanitizeSheetCell(value: unknown): string {
   if (value == null) return "";
   return String(value).replace(/\r\n/g, "\n");
+}
+
+function encodeSingleByteString(text: string, languageId: number): Uint8Array {
+  const source = String(text || "");
+  const out = new Uint8Array(source.length);
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const codePoint = source.charCodeAt(i);
+
+    if (codePoint <= 0x7f) {
+      out[i] = codePoint;
+      continue;
+    }
+
+    const cp1250Polish = languageId === 5 ? WINDOWS_1250_POLISH_ENCODE_MAP[ch] : undefined;
+    if (cp1250Polish !== undefined) {
+      out[i] = cp1250Polish;
+      continue;
+    }
+
+    const cp1252Extra = WINDOWS_1252_EXTRA_ENCODE_MAP[ch];
+    if (cp1252Extra !== undefined) {
+      out[i] = cp1252Extra;
+      continue;
+    }
+
+    if (codePoint >= 0xa0 && codePoint <= 0xff) {
+      out[i] = codePoint;
+      continue;
+    }
+
+    out[i] = 0x3f; // '?'
+  }
+  return out;
 }
 
 function normalizeParsedBundle(bundle: TlkBundleConfig): TlkBundleConfig {
@@ -204,8 +293,8 @@ export function buildRowsFromParsedTlkBundles(parsedBundles: readonly ParsedTlkB
   return rows;
 }
 
-export function encodeTlkText(text: string): Uint8Array {
-  return new TextEncoder().encode(String(text || ""));
+export function encodeTlkText(text: string, languageId: number): Uint8Array {
+  return encodeSingleByteString(String(text || ""), languageId);
 }
 
 export function quickChecksumHex(bytes: Uint8Array): string {
@@ -224,9 +313,25 @@ export function makeTlkFileName(baseName: string, locale: string, isDialogf: boo
 }
 
 export function buildSingleTlkBinaryFromColumn(rows: readonly TlkGridRow[], columnField: string, languageId: number): Uint8Array {
-  const texts = rows.map(row => String((row as Record<string, unknown>)[columnField] || ""));
-  const encodedRows = texts.map(encodeTlkText);
-  const descriptorBytes = rows.length * TLK_ENTRY_SIZE;
+  const normalizedStrRefs = rows.map((row) => {
+    const raw = Number(row.strRef);
+    if (!Number.isFinite(raw)) return -1;
+    const value = Math.trunc(raw);
+    return value >= 0 ? value : -1;
+  });
+
+  const maxStrRef = normalizedStrRefs.reduce((max, value) => Math.max(max, value), -1);
+  const entryCount = Math.max(0, maxStrRef + 1);
+  const texts = new Array<string>(entryCount).fill("");
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const strRef = normalizedStrRefs[i];
+    if (strRef < 0 || strRef >= entryCount) continue;
+    texts[strRef] = String((rows[i] as Record<string, unknown>)[columnField] || "");
+  }
+
+  const encodedRows = texts.map((text) => encodeTlkText(text, languageId));
+  const descriptorBytes = entryCount * TLK_ENTRY_SIZE;
   const stringBlobOffset = TLK_HEADER_SIZE + descriptorBytes;
   const stringBlobSize = encodedRows.reduce((sum, bytes) => sum + bytes.length, 0);
   const totalBytes = stringBlobOffset + stringBlobSize;
@@ -237,11 +342,11 @@ export function buildSingleTlkBinaryFromColumn(rows: readonly TlkGridRow[], colu
   bytes.set([0x54, 0x4c, 0x4b, 0x20], 0);
   bytes.set([0x56, 0x33, 0x2e, 0x30], 4);
   view.setUint32(8, Number(languageId) || 0, true);
-  view.setUint32(12, rows.length, true);
+  view.setUint32(12, entryCount, true);
   view.setUint32(16, stringBlobOffset, true);
 
   let textCursor = stringBlobOffset;
-  for (let i = 0; i < rows.length; i += 1) {
+  for (let i = 0; i < entryCount; i += 1) {
     const descBase = TLK_HEADER_SIZE + i * TLK_ENTRY_SIZE;
     const textBytes = encodedRows[i];
     const hasText = textBytes.length > 0;

@@ -1,5 +1,6 @@
 .workflow-page {
-  max-width: 1120px;
+  max-width: min(1360px, 92vw);
+  width: 100%;
   margin: 0 auto;
   padding: 1rem 1.1rem 2rem;
   display: grid;
@@ -51,25 +52,41 @@
 
 .scope-switch__tabs {
   display: inline-flex;
-  background: #0f2032;
+  background: #0c1b2b;
+  border: 1px solid #274968;
   border-radius: 0.65rem;
   padding: 0.2rem;
   gap: 0.2rem;
 }
 
 .scope-switch__tab {
-  border: 1px solid transparent;
-  background: transparent;
-  color: #d3e4ff;
+  border: 1px solid #355779;
+  background: #16314e;
+  color: #e7f2ff;
   padding: 0.4rem 0.85rem;
   border-radius: 0.5rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.scope-switch__tab:hover {
+  border-color: #6aa7e2;
+  background: #1f4268;
+  transform: translateY(-1px);
+}
+
+.scope-switch__tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(123, 181, 244, 0.45);
 }
 
 .scope-switch__tab--active,
 .scope-switch__tab[aria-selected="true"] {
-  border-color: #355a83;
-  background: #1e3c63;
+  border-color: #82bcf8;
+  background: linear-gradient(180deg, #2f6fa9, #285f92);
   color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
 .step-strip {
@@ -251,13 +268,18 @@
   font-size: 0.85rem;
 }
 
-.workflow-screen input {
+.workflow-screen input,
+.workflow-screen select {
   width: min(520px, 100%);
   padding: 0.55rem;
   border-radius: 0.5rem;
   border: 1px solid #35537a;
   background: #0f233d;
   color: #e4efff;
+}
+
+.workflow-screen__field--compact {
+  margin-top: 0.7rem;
 }
 
 .workflow-screen__hint {
@@ -478,9 +500,15 @@
 }
 
 .workflow-actions__continue {
-  border-color: #4776a9;
-  background: linear-gradient(180deg, #214a75, #1d4167);
+  border-color: #2f8a62;
+  background: linear-gradient(180deg, #2a7a58, #1f6145);
+  color: #f4fff9;
   padding-inline: 1rem;
+}
+
+.workflow-actions__continue:hover:not(:disabled) {
+  border-color: #56b184;
+  background: linear-gradient(180deg, #349168, #266d4f);
 }
 
 .workflow-validation-feedback {
@@ -640,6 +668,14 @@
   justify-content: flex-start;
 }
 
+.workflow-grid__toolbar-row--bulk-copy {
+  justify-content: flex-start;
+}
+
+.workflow-grid__toolbar-row--find-replace {
+  justify-content: flex-start;
+}
+
 .workflow-grid__toolbar-row--info {
   justify-content: space-between;
   align-items: center;
@@ -715,6 +751,109 @@
   gap: 0.65rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.workflow-grid__bulk-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  color: #d3e2f0;
+}
+
+.workflow-grid__bulk-copy-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 auto;
+  min-width: max-content;
+}
+
+.workflow-grid__bulk-copy-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+
+.workflow-grid__bulk-copy span {
+  font-size: 0.86rem;
+  color: #c7d9ee;
+  font-weight: 700;
+}
+
+.workflow-grid__bulk-copy small {
+  color: #9fb4ce;
+  font-size: 0.78rem;
+}
+
+.workflow-grid__bulk-copy select {
+  min-width: 180px;
+  width: 220px;
+  max-width: 220px;
+  padding: 0.42rem 0.52rem;
+  border-radius: 0.45rem;
+  border: 1px solid #35537a;
+  background: #0f233d;
+  color: #e4efff;
+}
+
+.workflow-grid__inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #bcd1e9;
+  font-size: 0.8rem;
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+.workflow-grid__inline-check input {
+  accent-color: #3d7fc1;
+}
+
+.workflow-grid__find-replace {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  width: 100%;
+  min-width: 0;
+  color: #d3e2f0;
+}
+
+.workflow-grid__find-replace span {
+  font-size: 0.86rem;
+  color: #c7d9ee;
+  font-weight: 700;
+}
+
+.workflow-grid__find-replace small {
+  color: #9fb4ce;
+  font-size: 0.78rem;
+}
+
+.workflow-grid__find-replace input,
+.workflow-grid__find-replace select {
+  min-width: 150px;
+  padding: 0.42rem 0.52rem;
+  border-radius: 0.45rem;
+  border: 1px solid #35537a;
+  background: #0f233d;
+  color: #e4efff;
+}
+
+.workflow-grid__find-replace input[type="text"] {
+  width: 260px;
+}
+
+.workflow-grid__find-replace select {
+  width: 170px;
 }
 
 .workflow-grid__chip {
@@ -808,6 +947,11 @@
 
 .workflow-grid__toolbar-error {
   color: #ff9b9b;
+  font-size: 0.78rem;
+}
+
+.workflow-grid__toolbar-copy {
+  color: #9fd8b4;
   font-size: 0.78rem;
 }
 
@@ -1090,6 +1234,10 @@
   .workflow-grid__settings {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .workflow-grid__bulk-copy {
+    overflow-x: auto;
   }
 
   .workflow-grid__toolbar-row--info {

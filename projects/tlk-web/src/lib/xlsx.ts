@@ -2,7 +2,7 @@ import type { LocaleColumn, LocaleVariant, TlkGridRow, ValidationIssue, Validati
 import { localeCodeToFieldToken, normalizeLocaleCode } from "./types";
 
 export interface XlsxRuntime {
-  read(data: ArrayBuffer, options: { type: "array" }): {
+  read(data: ArrayBuffer, options: { type: "array"; raw?: boolean; cellDates?: boolean }): {
     SheetNames: string[];
     Sheets: Record<string, unknown>;
   };
@@ -65,12 +65,18 @@ export function buildTlkRowsFromXlsxRows(sheetRows: readonly XlsxRow[]): TlkGrid
   normalized.sort((a, b) => Number(a.StrRef) - Number(b.StrRef));
 
   return normalized.map(row => {
+    const localeKeyOrder = Object.keys(row).filter((key) => {
+      if (["StrRef", "Source_EN", "Source", "Context", "Status"].includes(key)) return false;
+      return true;
+    });
+    const firstLocaleKey = localeKeyOrder[0];
+    const fallbackSource = firstLocaleKey ? sanitizeSheetCell(row[firstLocaleKey]) : "";
     const status = sanitizeSheetCell(row.Status);
     const result: TlkGridRow = {
       id: Number(row.StrRef),
       strRef: Number(row.StrRef),
-      sourceEn: sanitizeSheetCell(row.Source_EN || row.Source || ""),
-      context: sanitizeSheetCell(row.Context || ""),
+      sourceEn: sanitizeSheetCell(row.Source_EN || row.Source || fallbackSource),
+      context: "",
       status: status || "Draft"
     };
 
@@ -101,8 +107,6 @@ export function buildXlsxRowsForExport(rows: readonly TlkGridRow[], localeColumn
   return rows.map(row => {
     const exported: XlsxRow = {
       StrRef: row.strRef,
-      Source_EN: row.sourceEn,
-      Status: row.status || "Draft"
     };
 
     localeColumns.forEach(col => {
@@ -119,7 +123,7 @@ export function buildXlsxRowsForExport(rows: readonly TlkGridRow[], localeColumn
 }
 
 export function buildXlsxHeaderForExport(localeColumns: readonly LocaleColumn[]): string[] {
-  const headers = ["StrRef", "Source_EN", "Status"];
+  const headers = ["StrRef"];
   for (let i = 0; i < localeColumns.length; i += 1) {
     const col = localeColumns[i];
     const columnName = col.variant === "dialogf"
@@ -143,8 +147,6 @@ export function buildXlsxAoaForExport(
     const row = rows[rowIndex];
     const line: Array<string | number> = [
       row.strRef,
-      sanitizeSheetCell(row.sourceEn),
-      sanitizeSheetCell(row.status || "Draft"),
     ];
 
     for (let colIndex = 0; colIndex < localeColumns.length; colIndex += 1) {
@@ -338,7 +340,11 @@ export async function parseWorkbookFile(file: XlsxFile, xlsx: XlsxRuntime): Prom
   }
 
   const buffer = await file.arrayBuffer();
-  const workbook = xlsx.read(buffer, { type: "array" });
+  const workbook = xlsx.read(buffer, {
+    type: "array",
+    raw: true,
+    cellDates: false,
+  });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) {
     throw new Error("XLSX workbook has no sheets.");
@@ -346,7 +352,7 @@ export async function parseWorkbookFile(file: XlsxFile, xlsx: XlsxRuntime): Prom
   const sheet = workbook.Sheets[firstSheetName];
   const jsonRows = xlsx.utils.sheet_to_json(sheet, {
     defval: "",
-    raw: false,
+    raw: true,
     blankrows: false
   });
   if (!Array.isArray(jsonRows) || jsonRows.length === 0) {
@@ -370,13 +376,9 @@ export function validateXlsxSchema(rows: readonly XlsxRow[], sourceLabel = "XLSX
   }
 
   const firstRow = rows[0] as Record<string, unknown>;
-  const hasSource = firstRow.Source_EN !== undefined || firstRow.Source !== undefined;
   const hasStrRef = firstRow.StrRef !== undefined;
   if (!hasStrRef) {
     issues.push({ severity: "error", field: "StrRef", message: `${sourceLabel}: missing required column StrRef.` });
-  }
-  if (!hasSource) {
-    issues.push({ severity: "error", message: `${sourceLabel}: missing required column Source_EN (or Source).` });
   }
   if (!Object.keys(firstRow).some(key => /^loc_/i.test(key))) {
     issues.push({ severity: "warning", message: `${sourceLabel}: no locale columns detected; export/import may be translation-only.` });

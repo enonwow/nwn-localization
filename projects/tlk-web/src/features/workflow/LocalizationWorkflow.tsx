@@ -11,6 +11,7 @@ import {
   parseSingleTlkBuffer,
   quickChecksumHex,
   safeFileNameFromPath,
+  tlkEncodingForLanguageId,
   TLK_LOCALE_TO_LANGUAGE_ID,
 } from "../../lib/tlk";
 import { localeCodeToFieldToken, normalizeLocaleCode, type LocaleColumn, type ParsedTlkBundle, type TlkBundleConfig, type TlkGridRow } from "../../lib/types";
@@ -41,7 +42,9 @@ type ArtifactRow = {
   checksum: string;
   bytes: Uint8Array;
   locale: string;
+  encoding: string;
   isDialogf: boolean;
+  kind: "tlk" | "zip";
 };
 
 type ValidationFeedback = {
@@ -78,10 +81,38 @@ type CsvExportWorkerResponse =
       error: string;
     };
 
+type CsvEncoding =
+  | "utf8"
+  | "utf8-bom"
+  | "iso-8859-1"
+  | "windows-1252"
+  | "windows-1251"
+  | "euc-jp"
+  | "shift_jis"
+  | "euc-kr"
+  | "windows-1250"
+  | "gb2312"
+  | "iso-8859-2";
+
+const CSV_ENCODING_OPTIONS: Array<{ value: CsvEncoding; label: string }> = [
+  { value: "utf8-bom", label: "UTF-8 (BOM)" },
+  { value: "utf8", label: "UTF-8 (no BOM)" },
+  { value: "iso-8859-1", label: "ISO-8859-1" },
+  { value: "windows-1252", label: "Windows-1252" },
+  { value: "windows-1251", label: "Windows-1251" },
+  { value: "euc-jp", label: "EUC-JP" },
+  { value: "shift_jis", label: "Shift_JIS" },
+  { value: "euc-kr", label: "EUC-KR" },
+  { value: "windows-1250", label: "Windows-1250" },
+  { value: "gb2312", label: "GB2312" },
+  { value: "iso-8859-2", label: "ISO-8859-2" },
+];
+
 const TLK_LOCALE_OPTIONS = ["EN", "PL", "DE", "FR", "ES", "IT", "PT-BR", "RU"];
 const DEFAULT_GITHUB_REPO = "enonwow/nwn-localization-test";
 const DEFAULT_GITHUB_BASE_BRANCH = "main";
 const DEFAULT_GITHUB_CSV_FOLDER = "csv-latest";
+const DEFAULT_CSV_FILE_NAME = "test.csv";
 
 function normalizeGithubRepoRef(value: string | undefined): string {
   const raw = String(value || "").trim();
@@ -238,6 +269,7 @@ function createCsvExportTask(
   localeColumns: LocaleColumn[],
   fileName: string,
   lineEnding: "lf" | "crlf",
+  encoding: CsvEncoding,
   onProgress?: (payload: { doneRows: number; totalRows: number; progress: number }) => void,
 ) {
   const worker = new Worker(new URL("../../workers/csvExportWorker.ts", import.meta.url), { type: "module" });
@@ -269,7 +301,7 @@ function createCsvExportTask(
     };
   });
 
-  worker.postMessage({ rows, localeColumns, fileName, lineEnding });
+  worker.postMessage({ rows, localeColumns, fileName, lineEnding, encoding });
   const cancel = () => {
     if (isSettled) return;
     isSettled = true;
@@ -277,6 +309,34 @@ function createCsvExportTask(
     rejectPromise?.(new Error("Export canceled."));
   };
   return { worker, promise, cancel };
+}
+
+function csvEncodingToMimeCharset(encoding: CsvEncoding): string {
+  switch (encoding) {
+    case "utf8":
+    case "utf8-bom":
+      return "utf-8";
+    case "iso-8859-1":
+      return "iso-8859-1";
+    case "windows-1252":
+      return "windows-1252";
+    case "windows-1251":
+      return "windows-1251";
+    case "euc-jp":
+      return "euc-jp";
+    case "shift_jis":
+      return "shift_jis";
+    case "euc-kr":
+      return "euc-kr";
+    case "windows-1250":
+      return "windows-1250";
+    case "gb2312":
+      return "gb2312";
+    case "iso-8859-2":
+      return "iso-8859-2";
+    default:
+      return "utf-8";
+  }
 }
 
 function statusBadgeClass(value: string): string {
@@ -315,19 +375,25 @@ function makeRebuildZipName(sourceName: string): string {
   return `${stem}.zip`;
 }
 
-function makeRebuildArtifactName(locale: string, isDialogf: boolean): string {
-  const token = localeCodeToFieldToken(locale).replace(/_/g, "-");
-  const stem = isDialogf ? "dialogf" : "dialog";
-  return `${stem}_${token}.tlk`;
+function makeLocaleFileToken(locale: string): string {
+  const normalized = String(locale || "").toUpperCase().trim();
+  const token = normalized.replace(/[^A-Z0-9]+/g, "-");
+  return token || "XX";
+}
+
+function makeRebuildArtifactName(baseStem: string, locale: string, isDialogf: boolean): string {
+  const localeToken = makeLocaleFileToken(locale);
+  const stem = isDialogf ? `${baseStem}f` : baseStem;
+  return `${stem}_${localeToken}.tlk`;
 }
 
 function makeZipLocaleFolder(locale: string): string {
   return localeCodeToFieldToken(locale).replace(/_/g, "-");
 }
 
-function makeZipArtifactPath(rootStem: string, locale: string, isDialogf: boolean): string {
+function makeZipArtifactPath(rootStem: string, baseStem: string, locale: string, isDialogf: boolean): string {
   const folder = makeZipLocaleFolder(locale);
-  const file = isDialogf ? "dialogf.tlk" : "dialog.tlk";
+  const file = isDialogf ? `${baseStem}f.tlk` : `${baseStem}.tlk`;
   return `${rootStem}/${folder}/${file}`;
 }
 
@@ -344,6 +410,8 @@ async function detectCsvLineEnding(file: File): Promise<"lf" | "crlf"> {
     return "lf";
   }
 }
+
+const BATCH_HISTORY_LIMIT = 25;
 
 const LocalizationWorkflow = () => {
   const [scope, setScope] = useState<WorkflowScope>("exchange");
@@ -365,9 +433,11 @@ const LocalizationWorkflow = () => {
     readSessionValue(SESSION_KEY_GITHUB_CSV_FOLDER, DEFAULT_GITHUB_CSV_FOLDER),
   );
   const [repoImportBranch, setRepoImportBranch] = useState(DEFAULT_GITHUB_BASE_BRANCH);
-  const [repoImportPath, setRepoImportPath] = useState(`${DEFAULT_GITHUB_CSV_FOLDER}/latest-localization.csv`);
+  const [repoImportPath, setRepoImportPath] = useState(`${DEFAULT_GITHUB_CSV_FOLDER}/${DEFAULT_CSV_FILE_NAME}`);
   const [rows, setRows] = useState<TlkGridRow[]>([]);
   const [baselineRows, setBaselineRows] = useState<TlkGridRow[]>([]);
+  const [batchUndoStack, setBatchUndoStack] = useState<TlkGridRow[][]>([]);
+  const [batchRedoStack, setBatchRedoStack] = useState<TlkGridRow[][]>([]);
   const [localeColumns, setLocaleColumns] = useState<LocaleColumn[]>([]);
   const [sourceLoaded, setSourceLoaded] = useState(false);
   const [validated, setValidated] = useState(false);
@@ -387,10 +457,12 @@ const LocalizationWorkflow = () => {
   const [exportProgressLabel, setExportProgressLabel] = useState("");
   const [lastExport, setLastExport] = useState<{ fileName: string; bytes: Uint8Array } | null>(null);
   const [exportRunMode, setExportRunMode] = useState<"generate" | "publish">("generate");
-  const [csvExportFileName, setCsvExportFileName] = useState("latest-localization.csv");
+  const [csvExportFileName, setCsvExportFileName] = useState(DEFAULT_CSV_FILE_NAME);
   const [csvLineEnding, setCsvLineEnding] = useState<"lf" | "crlf">("lf");
+  const [csvEncoding, setCsvEncoding] = useState<CsvEncoding>("utf8-bom");
   const [activeDropKey, setActiveDropKey] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState("");
+  const [prError, setPrError] = useState("");
   const [githubRuntimeToken, setGithubRuntimeToken] = useState(() => {
     removeSessionValue(SESSION_KEY_GITHUB_TOKEN);
     return "";
@@ -603,18 +675,13 @@ const LocalizationWorkflow = () => {
   }, [localeColumns, rows]);
 
   const coverage = totalLocaleCells > 0 ? (filledLocaleCells / totalLocaleCells) * 100 : 0;
-  const qaWarnings = useMemo(
-    () => rows.filter((row) => String(row.status || "").toLowerCase() === "needs qa").length,
-    [rows],
-  );
   const emptyRows = useMemo(
     () =>
       rows.filter((row) => {
-        const sourceEmpty = String(row.source || "").trim().length === 0;
         const allLocaleValuesEmpty =
           localeColumns.length === 0 ||
           localeColumns.every((col) => String(row[col.field] || "").trim().length === 0);
-        return sourceEmpty && allLocaleValuesEmpty;
+        return allLocaleValuesEmpty;
       }).length,
     [localeColumns, rows],
   );
@@ -638,6 +705,10 @@ const LocalizationWorkflow = () => {
   }, [baselineRows, localeColumns, rows, sourceLoaded]);
 
   const hasPublishableChanges = changeSummary.changedRows > 0;
+  const clearBatchHistory = useCallback(() => {
+    setBatchUndoStack([]);
+    setBatchRedoStack([]);
+  }, []);
 
   const resetFlowState = useCallback(() => {
     setRows([]);
@@ -661,11 +732,12 @@ const LocalizationWorkflow = () => {
     setExportProgress(0);
     setExportProgressLabel("");
     setLastExport(null);
-    setCsvExportFileName("latest-localization.csv");
+    setCsvExportFileName(DEFAULT_CSV_FILE_NAME);
     setCsvLineEnding("lf");
     setLoadSourceError("");
     setActiveDropKey(null);
-  }, []);
+    clearBatchHistory();
+  }, [clearBatchHistory]);
 
   const onScopeChange = useCallback(
     (nextScope: WorkflowScope) => {
@@ -682,7 +754,7 @@ const LocalizationWorkflow = () => {
     [resetFlowState],
   );
 
-  const onGridRowsChange = useCallback((nextRows: TlkGridRow[]) => {
+  const applyRowsAndResetMeta = useCallback((nextRows: TlkGridRow[]) => {
     setRows(nextRows);
     setValidated(false);
     setExported(false);
@@ -691,44 +763,46 @@ const LocalizationWorkflow = () => {
     setValidationFeedback(null);
   }, []);
 
+  const onGridRowsChange = useCallback((nextRows: TlkGridRow[]) => {
+    applyRowsAndResetMeta(nextRows);
+  }, [applyRowsAndResetMeta]);
+
+  const onGridBatchRowsChange = useCallback((nextRows: TlkGridRow[], previousRows?: TlkGridRow[]) => {
+    const snapshotBeforeChange = previousRows ? cloneRows(previousRows) : cloneRows(rows);
+    setBatchUndoStack((prev) => [snapshotBeforeChange, ...prev].slice(0, BATCH_HISTORY_LIMIT));
+    setBatchRedoStack([]);
+    applyRowsAndResetMeta(nextRows);
+  }, [applyRowsAndResetMeta, rows]);
+
   const onAddGridRow = useCallback(() => {
-    let createdStrRef: number | null = null;
-    setRows((prevRows) => {
-      const maxStrRef = prevRows.reduce((max, row) => {
-        const value = Number(row.strRef);
-        if (!Number.isFinite(value)) return max;
-        return Math.max(max, value);
-      }, -1);
-      const nextStrRef = maxStrRef + 1;
-      createdStrRef = nextStrRef;
+    const previousRows = cloneRows(rows);
+    const maxStrRef = previousRows.reduce((max, row) => {
+      const value = Number(row.strRef);
+      if (!Number.isFinite(value)) return max;
+      return Math.max(max, value);
+    }, -1);
+    const nextStrRef = maxStrRef + 1;
 
-      const nextRow: TlkGridRow = {
-        id: nextStrRef,
-        strRef: nextStrRef,
-        sourceEn: "",
-        context: "",
-        status: "Draft",
-      };
+    const nextRow: TlkGridRow = {
+      id: nextStrRef,
+      strRef: nextStrRef,
+      sourceEn: "",
+      context: "",
+      status: "Draft",
+    };
 
-      for (let i = 0; i < localeColumns.length; i += 1) {
-        const col = localeColumns[i];
-        nextRow[col.field] = "";
-      }
-
-      return [...prevRows, nextRow];
-    });
-    setValidated(false);
-    setExported(false);
-    setBuilt(false);
-    setLastExport(null);
-    setValidationFeedback(null);
-    if (createdStrRef != null) {
-      setStatusMessage(`Added new row StrRef ${createdStrRef}.`);
-    } else {
-      setStatusMessage("Added new row.");
+    for (let i = 0; i < localeColumns.length; i += 1) {
+      const col = localeColumns[i];
+      nextRow[col.field] = "";
     }
-    return createdStrRef;
-  }, [localeColumns]);
+
+    const nextRows = [...previousRows, nextRow];
+    setBatchUndoStack((prev) => [previousRows, ...prev].slice(0, BATCH_HISTORY_LIMIT));
+    setBatchRedoStack([]);
+    applyRowsAndResetMeta(nextRows);
+    setStatusMessage(`Added new row StrRef ${nextStrRef}.`);
+    return nextStrRef;
+  }, [applyRowsAndResetMeta, localeColumns, rows]);
 
   const onGridApiReady = useCallback((api: GridApi<TlkGridRow>) => {
     setGridApi(api);
@@ -804,8 +878,8 @@ const LocalizationWorkflow = () => {
         : {
             level: hasBlockingErrors ? "error" : "warning",
             message: hasBlockingErrors
-              ? `Validation blocked: Needs QA=${emptyRows}, Errors=${tokenMismatch}, Validated=${validatedCount}.`
-              : `Validation warnings: Needs QA=${emptyRows}, Errors=${tokenMismatch}, Validated=${validatedCount}.`,
+              ? `Validation blocked: Missing=${emptyRows}, Errors=${tokenMismatch}, Validated=${validatedCount}.`
+              : `Validation warnings: Missing=${emptyRows}, Errors=${tokenMismatch}, Validated=${validatedCount}.`,
             canProceed: !hasBlockingErrors,
             warningCount: emptyRows,
             errorCount: tokenMismatch,
@@ -1085,6 +1159,7 @@ const LocalizationWorkflow = () => {
     setLocaleColumns(effectiveColumns);
     setRows(cloneRows(builtRows));
     setBaselineRows(cloneRows(builtRows));
+    clearBatchHistory();
     setSourceLoaded(true);
     setValidated(false);
     setExported(false);
@@ -1096,7 +1171,7 @@ const LocalizationWorkflow = () => {
         ? `Loaded ${builtRows.length} rows with dialogf fallback for ${fallback.fallbackCount} pack(s).`
         : `Loaded ${builtRows.length} rows from TLK bundles.`,
     );
-  }, [getBundleFile, normalizedExtraLocales, tlkBundles]);
+  }, [clearBatchHistory, getBundleFile, normalizedExtraLocales, tlkBundles]);
 
   const loadFromXlsx = useCallback(
     async (file: File) => {
@@ -1109,11 +1184,20 @@ const LocalizationWorkflow = () => {
         return false;
       }
       const parsedColumns = getParsedLocaleColumnsFromRows(builtRows);
+      const parsedExtraLocales = Array.from(
+        new Set(
+          parsedColumns
+            .filter((col) => col.variant === "xlsx-extra")
+            .map((col) => normalizeLocaleCode(col.locale)),
+        ),
+      );
       setCsvExportFileName(makeCsvFileName(file.name));
       setCsvLineEnding(await detectCsvLineEnding(file));
+      setExtraXlsxLocales(parsedExtraLocales);
       setLocaleColumns(parsedColumns);
       setRows(cloneRows(builtRows));
       setBaselineRows(cloneRows(builtRows));
+      clearBatchHistory();
       setSourceLoaded(true);
       setValidated(false);
       setExported(false);
@@ -1123,7 +1207,7 @@ const LocalizationWorkflow = () => {
       setStatusMessage(`Loaded ${builtRows.length} rows from ${file.name}.`);
       return true;
     },
-    [],
+    [clearBatchHistory],
   );
 
   const loadFromRepo = useCallback(async () => {
@@ -1284,7 +1368,7 @@ const LocalizationWorkflow = () => {
 
     try {
       await yieldToUiFrame();
-      const task = createCsvExportTask(rows, localeColumns, fileName, exportLineEnding, ({ doneRows, totalRows, progress }) => {
+      const task = createCsvExportTask(rows, localeColumns, fileName, exportLineEnding, csvEncoding, ({ doneRows, totalRows, progress }) => {
         setExportProgress(progress);
         setExportProgressLabel(`${progress}% (${doneRows}/${totalRows})`);
       });
@@ -1294,7 +1378,8 @@ const LocalizationWorkflow = () => {
       exportWorkerRef.current = null;
       exportCancelRef.current = null;
       if (shouldSaveToDisk) {
-        await saveBytesToDisk(exportedCsv.bytes, exportedCsv.fileName, "text/csv;charset=utf-8");
+        const charset = csvEncodingToMimeCharset(csvEncoding);
+        await saveBytesToDisk(exportedCsv.bytes, exportedCsv.fileName, `text/csv;charset=${charset}`);
       }
       setLastExport(exportedCsv);
       setExported(true);
@@ -1311,7 +1396,7 @@ const LocalizationWorkflow = () => {
       setExportProgress(0);
       setExportProgressLabel("");
     }
-  }, [csvExportFileName, csvLineEnding, localeColumns, rows]);
+  }, [csvEncoding, csvExportFileName, csvLineEnding, localeColumns, rows]);
 
   const onExportXlsx = useCallback(async () => {
     if (isExportingXlsx) {
@@ -1348,6 +1433,7 @@ const LocalizationWorkflow = () => {
   );
 
   const onOpenPullRequest = useCallback(async () => {
+    setPrError("");
     if (!hasPublishableChanges) {
       setStatusMessage("No changes detected. Edit data before opening PR.");
       return;
@@ -1383,9 +1469,12 @@ const LocalizationWorkflow = () => {
         csvBytes: csvForPublish.bytes,
       });
       setPrUrl(published.prUrl);
+      setPrError("");
       setStatusMessage(`PR created on ${githubRepo}: ${published.prUrl}`);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "PR publish failed.");
+      const message = error instanceof Error ? error.message : "PR publish failed.";
+      setPrError(message);
+      setStatusMessage(message);
     } finally {
       setIsPublishingPr(false);
     }
@@ -1428,7 +1517,7 @@ const LocalizationWorkflow = () => {
       "## Totals",
       `- Total rows: ${rows.length}`,
       `- Validated rows: ${validatedCount}`,
-      `- QA warnings (Needs QA): ${validationFeedback.warningCount}`,
+      `- Warnings (missing translations): ${validationFeedback.warningCount}`,
       `- Blocking errors: ${validationFeedback.errorCount}`,
       `- Coverage: ${Math.round(coverage * 10) / 10}%`,
       "",
@@ -1463,6 +1552,7 @@ const LocalizationWorkflow = () => {
     const sourceNameForZip = csvExportFileName || mergedXlsxFile?.name || repoImportPath || "localization.csv";
     const zipName = makeRebuildZipName(sourceNameForZip);
     const zipRoot = makeSafeDownloadStem(safeFileNameFromPath(sourceNameForZip), "localization");
+    const artifactStem = zipRoot;
 
     const generatedArtifacts: ArtifactRow[] = [];
     for (let i = 0; i < localeColumns.length; i += 1) {
@@ -1472,34 +1562,43 @@ const LocalizationWorkflow = () => {
       const binary = buildSingleTlkBinaryFromColumn(rows, col.field, languageId);
       const bytes = new Uint8Array(binary.byteLength);
       bytes.set(binary);
-      const fileName = makeRebuildArtifactName(locale, col.variant === "dialogf");
+      const fileName = makeRebuildArtifactName(artifactStem, locale, col.variant === "dialogf");
       generatedArtifacts.push({
         file: fileName,
         checksum: quickChecksumHex(bytes),
         bytes,
         locale,
+        encoding: tlkEncodingForLanguageId(languageId),
         isDialogf: col.variant === "dialogf",
+        kind: "tlk",
       });
     }
 
+    const downloadableArtifacts: ArtifactRow[] = [...generatedArtifacts];
     if (generatedArtifacts.length > 1) {
       const zipBytes = buildZipArchive(
         generatedArtifacts.map((artifact) => ({
-          name: makeZipArtifactPath(zipRoot, artifact.locale, artifact.isDialogf),
+          name: makeZipArtifactPath(zipRoot, artifactStem, artifact.locale, artifact.isDialogf),
           bytes: artifact.bytes,
         })),
       );
-      await saveBytesToDisk(zipBytes, zipName, "application/zip");
-      setStatusMessage(`Rebuild completed. Downloaded ${zipName} with ${generatedArtifacts.length} TLK files.`);
+      downloadableArtifacts.unshift({
+        file: zipName,
+        checksum: quickChecksumHex(zipBytes),
+        bytes: zipBytes,
+        locale: "ALL",
+        encoding: "bundle",
+        isDialogf: false,
+        kind: "zip",
+      });
+      setStatusMessage(`Rebuild completed. Bundle + ${generatedArtifacts.length} TLK files are ready to download.`);
     } else if (generatedArtifacts.length === 1) {
-      const artifact = generatedArtifacts[0];
-      await saveBytesToDisk(artifact.bytes, artifact.file, "application/octet-stream");
-      setStatusMessage(`Rebuild completed. Downloaded ${artifact.file}.`);
+      setStatusMessage(`Rebuild completed. ${generatedArtifacts[0].file} is ready to download.`);
     } else {
       setStatusMessage("No TLK artifacts were generated.");
     }
 
-    setArtifacts(generatedArtifacts);
+    setArtifacts(downloadableArtifacts);
     setBuilt(true);
   }, [csvExportFileName, localeColumns, mergedXlsxFile?.name, repoImportPath, rows]);
 
@@ -1513,14 +1612,30 @@ const LocalizationWorkflow = () => {
   }, []);
 
   const onUndo = useCallback(() => {
+    if (batchUndoStack.length > 0) {
+      const [snapshot, ...rest] = batchUndoStack;
+      setBatchUndoStack(rest);
+      setBatchRedoStack((prev) => [cloneRows(rows), ...prev].slice(0, BATCH_HISTORY_LIMIT));
+      applyRowsAndResetMeta(cloneRows(snapshot));
+      setStatusMessage("Undid last bulk operation.");
+      return;
+    }
     if (!gridApi) return;
     gridApi.undoCellEditing();
-  }, [gridApi]);
+  }, [applyRowsAndResetMeta, batchUndoStack, gridApi, rows]);
 
   const onRedo = useCallback(() => {
+    if (batchRedoStack.length > 0) {
+      const [snapshot, ...rest] = batchRedoStack;
+      setBatchRedoStack(rest);
+      setBatchUndoStack((prev) => [cloneRows(rows), ...prev].slice(0, BATCH_HISTORY_LIMIT));
+      applyRowsAndResetMeta(cloneRows(snapshot));
+      setStatusMessage("Redid last bulk operation.");
+      return;
+    }
     if (!gridApi) return;
     gridApi.redoCellEditing();
-  }, [gridApi]);
+  }, [applyRowsAndResetMeta, batchRedoStack, gridApi, rows]);
 
   const currentPageSummary = useMemo(() => {
     return rows.length > 0 ? `Rows: ${rows.length}` : "Rows: 0";
@@ -1550,21 +1665,14 @@ const LocalizationWorkflow = () => {
     localeColumns.length > 0 &&
     hasPublishableChanges;
 
-  const kpiItems = useMemo(() => {
-    if (scope === "rebuild") {
-      return [
-        { value: `${Math.round(coverage * 10) / 10}%`, label: "Coverage" },
-        { value: String(qaWarnings), label: "QA warnings" },
-        { value: currentPageSummary, label: "Dataset" },
-      ];
-    }
-
-    return [
+  const kpiItems = useMemo(
+    () => [
       { value: String(emptyRows), label: "Empty rows" },
       { value: `${Math.round(coverage * 10) / 10}%`, label: "Coverage" },
       { value: currentPageSummary, label: "Dataset" },
-    ];
-  }, [coverage, currentPageSummary, emptyRows, qaWarnings, scope]);
+    ],
+    [coverage, currentPageSummary, emptyRows],
+  );
 
   const onStepSelect = useCallback(
     (index: number) => {
@@ -1836,6 +1944,22 @@ const LocalizationWorkflow = () => {
               </div>
             </div>
           )}
+          {scope === "exchange" ? (
+            <div className="workflow-screen__field workflow-screen__field--compact">
+              <label htmlFor="csv-encoding">CSV encoding (for Export + Publish)</label>
+              <select
+                id="csv-encoding"
+                value={csvEncoding}
+                onChange={(event) => setCsvEncoding(event.target.value as CsvEncoding)}
+              >
+                {CSV_ENCODING_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           {rows.length === 0 || localeColumns.length === 0 ? (
             <div className="workflow-empty-state">
               <p className="workflow-screen__hint">No parsed rows to show yet. Go back to Import and load TLK/CSV first.</p>
@@ -1853,6 +1977,7 @@ const LocalizationWorkflow = () => {
               pageSize={pageSize}
               onPageSizeChange={setPageSize}
               onRowsChange={onGridRowsChange}
+              onBatchRowsChange={onGridBatchRowsChange}
               onAddRow={onAddGridRow}
               onGridApiReady={onGridApiReady}
               onUndo={onUndo}
@@ -1994,6 +2119,11 @@ const LocalizationWorkflow = () => {
                   ) : null}
                 </div>
               ) : null}
+              {!isPublishingPr && prError ? (
+                <div className="workflow-inline-error" role="alert" aria-live="assertive">
+                  {`Open PR failed: ${prError}`}
+                </div>
+              ) : null}
               {!githubToken ? (
                 <p className="workflow-screen__hint">Paste GitHub PAT to enable Open PR.</p>
               ) : null}
@@ -2119,6 +2249,7 @@ const LocalizationWorkflow = () => {
                   <tr>
                     <th>File</th>
                     <th>Status</th>
+                    <th>Encoding</th>
                     <th>Checksum</th>
                     <th>Action</th>
                   </tr>
@@ -2128,12 +2259,13 @@ const LocalizationWorkflow = () => {
                     <tr key={artifact.file}>
                       <td>{artifact.file}</td>
                       <td>
-                        <span className={statusBadgeClass("validated")}>Built</span>
+                        <span className={statusBadgeClass("validated")}>{artifact.kind === "zip" ? "Bundle" : "Built"}</span>
                       </td>
+                      <td>{artifact.encoding}</td>
                       <td>{artifact.checksum}</td>
                       <td>
                         <button type="button" onClick={() => void onDownloadArtifact(artifact)}>
-                          Download
+                          {artifact.kind === "zip" ? "Download ZIP" : "Download"}
                         </button>
                       </td>
                     </tr>

@@ -20,6 +20,7 @@ type LocalizationGridProps = {
   pageSize: number;
   onPageSizeChange: (nextPageSize: number) => void;
   onRowsChange: (rows: TlkGridRow[]) => void;
+  onBatchRowsChange?: (rows: TlkGridRow[], previousRows?: TlkGridRow[]) => void;
   onAddRow?: () => number | null;
   onGridApiReady?: (api: GridApi<TlkGridRow>) => void;
   onUndo?: () => void;
@@ -27,6 +28,10 @@ type LocalizationGridProps = {
 };
 
 type ColumnWidthPreset = "compact" | "balanced" | "wide";
+type BulkCopyOption = {
+  field: string;
+  label: string;
+};
 
 const pageOptions = [10, 25, 50, 100, 200, 500];
 const MIN_GRID_HEIGHT = 220;
@@ -34,11 +39,11 @@ const DEFAULT_GRID_HEIGHT = 420;
 const DEFAULT_COLUMN_WIDTH_PRESET: ColumnWidthPreset = "balanced";
 const COLUMN_WIDTH_PRESETS: Record<
   ColumnWidthPreset,
-  { strRef: number; sourceEn: number; locale: number; status: number }
+  { strRef: number; locale: number }
 > = {
-  compact: { strRef: 95, sourceEn: 220, locale: 170, status: 120 },
-  balanced: { strRef: 110, sourceEn: 260, locale: 200, status: 130 },
-  wide: { strRef: 125, sourceEn: 320, locale: 260, status: 150 },
+  compact: { strRef: 95, locale: 170 },
+  balanced: { strRef: 110, locale: 200 },
+  wide: { strRef: 125, locale: 260 },
 };
 
 const LocalizationGrid = ({
@@ -48,6 +53,7 @@ const LocalizationGrid = ({
   pageSize,
   onPageSizeChange,
   onRowsChange,
+  onBatchRowsChange,
   onAddRow,
   onGridApiReady,
   onUndo,
@@ -60,16 +66,43 @@ const LocalizationGrid = ({
   const [notEmptyOnly, setNotEmptyOnly] = useState(false);
   const [changedOnly, setChangedOnly] = useState(false);
   const [missingOnly, setMissingOnly] = useState(false);
-  const [needsQaOnly, setNeedsQaOnly] = useState(false);
-  const [errorsOnly, setErrorsOnly] = useState(false);
+  const [targetEqualsSourceOnly, setTargetEqualsSourceOnly] = useState(false);
+  const [sourceNotEmptyTargetEmptyOnly, setSourceNotEmptyTargetEmptyOnly] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [gridHeight, setGridHeight] = useState(DEFAULT_GRID_HEIGHT);
   const [gridHeightDraft, setGridHeightDraft] = useState(String(DEFAULT_GRID_HEIGHT));
   const [gridHeightError, setGridHeightError] = useState("");
   const [columnWidthPreset, setColumnWidthPreset] = useState<ColumnWidthPreset>(DEFAULT_COLUMN_WIDTH_PRESET);
   const [columnWidthError, setColumnWidthError] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const [bulkCopySafeMode, setBulkCopySafeMode] = useState(true);
+  const [bulkCopyFilledSourceOnly, setBulkCopyFilledSourceOnly] = useState(true);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [findReplaceScope, setFindReplaceScope] = useState<"target" | "all">("target");
+  const [bulkCopyFrom, setBulkCopyFrom] = useState("");
+  const [bulkCopyTo, setBulkCopyTo] = useState("");
   const gridResizeRef = useRef<HTMLDivElement | null>(null);
+  const copyFeedbackTimeoutRef = useRef<number | null>(null);
   const changedStrRefSet = useMemo(() => new Set(changedStrRefs.map((value) => Number(value))), [changedStrRefs]);
+  const bulkCopyOptions = useMemo<BulkCopyOption[]>(() => {
+    return localeColumns.map((col) => ({ field: col.field, label: col.title }));
+  }, [localeColumns]);
+  const validBulkCopyFrom = useMemo(() => {
+    if (bulkCopyOptions.some((option) => option.field === bulkCopyFrom)) {
+      return bulkCopyFrom;
+    }
+    return bulkCopyOptions[0]?.field || "";
+  }, [bulkCopyFrom, bulkCopyOptions]);
+  const validBulkCopyTo = useMemo(() => {
+    const fromField = validBulkCopyFrom;
+    const hasCurrent = bulkCopyOptions.some((option) => option.field === bulkCopyTo);
+    if (hasCurrent && bulkCopyTo !== fromField) {
+      return bulkCopyTo;
+    }
+    const fallback = bulkCopyOptions.find((option) => option.field !== fromField);
+    return fallback?.field || "";
+  }, [bulkCopyOptions, bulkCopyTo, validBulkCopyFrom]);
 
   const columnDefs = useMemo<ColDef<TlkGridRow>[]>(() => {
     const localeDefs: ColDef<TlkGridRow>[] = localeColumns.map((col) => ({
@@ -82,18 +115,7 @@ const LocalizationGrid = ({
 
     return [
       { field: "strRef", headerName: "StrRef", width: 110, pinned: "left" },
-      { field: "sourceEn", headerName: "Source EN", minWidth: 260, flex: 1.8, pinned: "left" },
       ...localeDefs,
-      {
-        field: "status",
-        headerName: "Status",
-        width: 130,
-        editable: false,
-        valueFormatter: (params) => {
-          const value = String(params.value || "draft");
-          return value[0].toUpperCase() + value.slice(1);
-        },
-      },
     ];
   }, [localeColumns]);
 
@@ -148,7 +170,17 @@ const LocalizationGrid = ({
     if (!gridApi) return;
     gridApi.onFilterChanged();
     updatePaging();
-  }, [changedOnly, errorsOnly, gridApi, missingOnly, needsQaOnly, notEmptyOnly, updatePaging]);
+  }, [
+    changedOnly,
+    gridApi,
+    missingOnly,
+    notEmptyOnly,
+    sourceNotEmptyTargetEmptyOnly,
+    targetEqualsSourceOnly,
+    updatePaging,
+    validBulkCopyFrom,
+    validBulkCopyTo,
+  ]);
 
   useEffect(() => {
     const host = gridResizeRef.current;
@@ -172,8 +204,6 @@ const LocalizationGrid = ({
   const resolveWidthForColumn = useCallback((colId: string, preset: ColumnWidthPreset): number => {
     const config = COLUMN_WIDTH_PRESETS[preset];
     if (colId === "strRef") return config.strRef;
-    if (colId === "sourceEn") return config.sourceEn;
-    if (colId === "status") return config.status;
     if (colId.startsWith("loc_")) return config.locale;
     return config.locale;
   }, []);
@@ -212,6 +242,192 @@ const LocalizationGrid = ({
   }, [applyColumnWidthPreset, columnWidthPreset, columnDefs, gridApi]);
 
   useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current != null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (validBulkCopyFrom !== bulkCopyFrom) {
+      setBulkCopyFrom(validBulkCopyFrom);
+    }
+    if (validBulkCopyTo !== bulkCopyTo) {
+      setBulkCopyTo(validBulkCopyTo);
+    }
+  }, [bulkCopyFrom, bulkCopyTo, validBulkCopyFrom, validBulkCopyTo]);
+
+  const setTransientCopyFeedback = useCallback((message: string) => {
+    setCopyFeedback(message);
+    if (copyFeedbackTimeoutRef.current != null) {
+      window.clearTimeout(copyFeedbackTimeoutRef.current);
+    }
+    copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setCopyFeedback("");
+      copyFeedbackTimeoutRef.current = null;
+    }, 1800);
+  }, []);
+
+  const copyTextToClipboard = useCallback(async (text: string): Promise<boolean> => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+
+    if (typeof document === "undefined") return false;
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "absolute";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+    textArea.setSelectionRange(0, textArea.value.length);
+    const copied = document.execCommand("copy");
+    textArea.remove();
+    return copied;
+  }, []);
+
+  const copyFocusedCellValue = useCallback(async () => {
+    if (!gridApi) {
+      setTransientCopyFeedback("Grid not ready.");
+      return;
+    }
+
+    const focusedCell = gridApi.getFocusedCell();
+    if (!focusedCell) {
+      setTransientCopyFeedback("Select a cell first.");
+      return;
+    }
+
+    const rowNode = gridApi.getDisplayedRowAtIndex(focusedCell.rowIndex);
+    const row = rowNode?.data;
+    if (!row) {
+      setTransientCopyFeedback("No row selected.");
+      return;
+    }
+
+    const colId = focusedCell.column.getColId();
+    const value = String((row as Record<string, unknown>)[colId] ?? "");
+
+    try {
+      const copied = await copyTextToClipboard(value);
+      setTransientCopyFeedback(copied ? "Copied cell value." : "Could not copy cell value.");
+    } catch {
+      setTransientCopyFeedback("Clipboard blocked by browser.");
+    }
+  }, [copyTextToClipboard, gridApi, setTransientCopyFeedback]);
+
+  const applyBulkCopyColumns = useCallback(() => {
+    if (!validBulkCopyFrom || !validBulkCopyTo || validBulkCopyFrom === validBulkCopyTo) {
+      setTransientCopyFeedback("Select different source and target columns.");
+      return;
+    }
+
+    const fromLabel = bulkCopyOptions.find((option) => option.field === validBulkCopyFrom)?.label || validBulkCopyFrom;
+    const toLabel = bulkCopyOptions.find((option) => option.field === validBulkCopyTo)?.label || validBulkCopyTo;
+    let changedCount = 0;
+
+    const nextRows = rows.map((row) => {
+      const sourceValue = String((row as Record<string, unknown>)[validBulkCopyFrom] ?? "");
+      const targetValue = String((row as Record<string, unknown>)[validBulkCopyTo] ?? "");
+      const sourceTrimmed = sourceValue.trim();
+      const targetTrimmed = targetValue.trim();
+      const sourceAllowed = bulkCopyFilledSourceOnly ? sourceTrimmed.length > 0 : true;
+      const targetAllowed = bulkCopySafeMode ? targetTrimmed.length === 0 : true;
+      if (!sourceAllowed || !targetAllowed) {
+        return row;
+      }
+      if (sourceValue !== targetValue) {
+        changedCount += 1;
+      }
+      return {
+        ...row,
+        [validBulkCopyTo]: sourceValue,
+      };
+    });
+
+    if (changedCount === 0) {
+      setTransientCopyFeedback(`No changes (${fromLabel} -> ${toLabel}).`);
+      return;
+    }
+
+    if (onBatchRowsChange) {
+      onBatchRowsChange(nextRows);
+    } else {
+      onRowsChange(nextRows);
+    }
+    setTransientCopyFeedback(`Copied ${changedCount} row(s): ${fromLabel} -> ${toLabel}.`);
+  }, [
+    bulkCopyFilledSourceOnly,
+    bulkCopyOptions,
+    bulkCopySafeMode,
+    onBatchRowsChange,
+    onRowsChange,
+    rows,
+    setTransientCopyFeedback,
+    validBulkCopyFrom,
+    validBulkCopyTo,
+  ]);
+
+  const applyFindReplace = useCallback(() => {
+    const find = findText;
+    if (!find) {
+      setTransientCopyFeedback("Enter text to find.");
+      return;
+    }
+    const columns =
+      findReplaceScope === "all"
+        ? localeColumns.map((col) => col.field)
+        : validBulkCopyTo
+          ? [validBulkCopyTo]
+          : [];
+    if (columns.length === 0) {
+      setTransientCopyFeedback("Select target column first.");
+      return;
+    }
+
+    let changedCells = 0;
+    const nextRows = rows.map((row) => {
+      let rowChanged = false;
+      const nextRow: TlkGridRow = { ...row };
+      for (let i = 0; i < columns.length; i += 1) {
+        const field = columns[i];
+        const currentValue = String((row as Record<string, unknown>)[field] ?? "");
+        if (!currentValue.includes(find)) continue;
+        const replacedValue = currentValue.split(find).join(replaceText);
+        if (replacedValue === currentValue) continue;
+        nextRow[field] = replacedValue;
+        changedCells += 1;
+        rowChanged = true;
+      }
+      return rowChanged ? nextRow : row;
+    });
+
+    if (changedCells === 0) {
+      setTransientCopyFeedback("No matching cells.");
+      return;
+    }
+    if (onBatchRowsChange) {
+      onBatchRowsChange(nextRows);
+    } else {
+      onRowsChange(nextRows);
+    }
+    setTransientCopyFeedback(`Find & replace updated ${changedCells} cell(s).`);
+  }, [
+    findReplaceScope,
+    findText,
+    localeColumns,
+    onBatchRowsChange,
+    onRowsChange,
+    replaceText,
+    rows,
+    setTransientCopyFeedback,
+    validBulkCopyTo,
+  ]);
+
+  useEffect(() => {
     const isTypingTarget = (target: EventTarget | null) => {
       const element = target as HTMLElement | null;
       if (!element) return false;
@@ -246,6 +462,15 @@ const LocalizationGrid = ({
         return;
       }
 
+      if (ctrlOrMeta && lower === "c") {
+        const hasFocusedGridCell = Boolean(gridApi?.getFocusedCell());
+        if (hasFocusedGridCell) {
+          event.preventDefault();
+          void copyFocusedCellValue();
+          return;
+        }
+      }
+
       if (event.key === "?") {
         event.preventDefault();
         setShowShortcuts((prev) => !prev);
@@ -264,27 +489,22 @@ const LocalizationGrid = ({
       }
       if (event.altKey && lower === "3") {
         event.preventDefault();
-        setNeedsQaOnly((prev) => !prev);
-        return;
-      }
-      if (event.altKey && lower === "4") {
-        event.preventDefault();
-        setErrorsOnly((prev) => !prev);
-        return;
-      }
-      if (event.altKey && lower === "5") {
-        event.preventDefault();
         setChangedOnly((prev) => !prev);
+        return;
+      }
+      if (event.altKey && lower === "c") {
+        event.preventDefault();
+        void copyFocusedCellValue();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onRedo, onUndo, showShortcuts]);
+  }, [changedOnly, copyFocusedCellValue, gridApi, onRedo, onUndo, showShortcuts]);
 
   const isExternalFilterPresent = useCallback(() => {
-    return notEmptyOnly || changedOnly || missingOnly || needsQaOnly || errorsOnly;
-  }, [changedOnly, errorsOnly, missingOnly, needsQaOnly, notEmptyOnly]);
+    return notEmptyOnly || changedOnly || missingOnly || targetEqualsSourceOnly || sourceNotEmptyTargetEmptyOnly;
+  }, [changedOnly, missingOnly, notEmptyOnly, sourceNotEmptyTargetEmptyOnly, targetEqualsSourceOnly]);
 
   const doesExternalFilterPass = useCallback(
     (node: IRowNode<TlkGridRow>) => {
@@ -293,17 +513,32 @@ const LocalizationGrid = ({
 
       const hasValue = localeColumns.some((col) => String(row[col.field] || "").trim().length > 0);
       const hasMissing = localeColumns.some((col) => String(row[col.field] || "").trim().length === 0);
-      const status = String(row.status || "").toLowerCase();
+      const sourceValue = String((row as Record<string, unknown>)[validBulkCopyFrom] ?? "").trim();
+      const targetValue = String((row as Record<string, unknown>)[validBulkCopyTo] ?? "").trim();
 
       if (notEmptyOnly && !hasValue) return false;
       if (changedOnly && !changedStrRefSet.has(Number(row.strRef))) return false;
       if (missingOnly && !hasMissing) return false;
-      if (needsQaOnly && status !== "needs qa") return false;
-      if (errorsOnly && status !== "error") return false;
+      if (targetEqualsSourceOnly) {
+        if (!sourceValue || !targetValue || sourceValue !== targetValue) return false;
+      }
+      if (sourceNotEmptyTargetEmptyOnly) {
+        if (!sourceValue || targetValue) return false;
+      }
 
       return true;
     },
-    [changedOnly, changedStrRefSet, errorsOnly, localeColumns, missingOnly, needsQaOnly, notEmptyOnly],
+    [
+      changedOnly,
+      changedStrRefSet,
+      localeColumns,
+      missingOnly,
+      notEmptyOnly,
+      sourceNotEmptyTargetEmptyOnly,
+      targetEqualsSourceOnly,
+      validBulkCopyFrom,
+      validBulkCopyTo,
+    ],
   );
 
   const resetQuickFilters = useCallback(() => {
@@ -311,8 +546,8 @@ const LocalizationGrid = ({
     setNotEmptyOnly(false);
     setChangedOnly(false);
     setMissingOnly(false);
-    setNeedsQaOnly(false);
-    setErrorsOnly(false);
+    setTargetEqualsSourceOnly(false);
+    setSourceNotEmptyTargetEmptyOnly(false);
   }, []);
 
   const resetMergedToolbarState = useCallback(() => {
@@ -359,15 +594,37 @@ const LocalizationGrid = ({
   const handleCellValueChanged = useCallback(
     (event: CellValueChangedEvent<TlkGridRow>) => {
       if (!event.data) return;
+      const changedField = event.colDef.field;
+      const changedStrRef = Number(event.data.strRef);
       const nextRows: TlkGridRow[] = [];
       event.api.forEachNode((node) => {
         if (!node.data) return;
         const row = { ...node.data };
         nextRows.push(row);
       });
+
+      let previousRowsSnapshot: TlkGridRow[] | undefined;
+      if (changedField && event.oldValue !== event.newValue) {
+        previousRowsSnapshot = nextRows.map((row) => ({ ...row }));
+        const targetRow =
+          previousRowsSnapshot.find((row) => Number(row.strRef) === changedStrRef) ??
+          (typeof event.rowIndex === "number" &&
+          event.rowIndex >= 0 &&
+          event.rowIndex < previousRowsSnapshot.length
+            ? previousRowsSnapshot[event.rowIndex]
+            : undefined);
+        if (targetRow) {
+          (targetRow as Record<string, unknown>)[changedField] = event.oldValue as unknown;
+        }
+      }
+
+      if (onBatchRowsChange) {
+        onBatchRowsChange(nextRows, previousRowsSnapshot);
+        return;
+      }
       onRowsChange(nextRows);
     },
-    [onRowsChange],
+    [onBatchRowsChange, onRowsChange],
   );
 
   return (
@@ -380,7 +637,7 @@ const LocalizationGrid = ({
               <input
                 type="text"
                 value={searchText}
-                placeholder="StrRef, source, locale..."
+                placeholder="StrRef, locale..."
                 onChange={(event) => setSearchText(event.target.value)}
               />
             </label>
@@ -463,22 +720,121 @@ const LocalizationGrid = ({
               </button>
               <button
                 type="button"
-                aria-pressed={needsQaOnly}
-                className={`workflow-grid__chip ${needsQaOnly ? "workflow-grid__chip--active" : ""}`}
-                onClick={() => setNeedsQaOnly((prev) => !prev)}
+                aria-pressed={targetEqualsSourceOnly}
+                className={`workflow-grid__chip ${targetEqualsSourceOnly ? "workflow-grid__chip--active" : ""}`}
+                onClick={() => setTargetEqualsSourceOnly((prev) => !prev)}
+                disabled={!validBulkCopyFrom || !validBulkCopyTo || validBulkCopyFrom === validBulkCopyTo}
               >
-                Needs QA
+                Target == Source
               </button>
               <button
                 type="button"
-                aria-pressed={errorsOnly}
-                className={`workflow-grid__chip ${errorsOnly ? "workflow-grid__chip--active" : ""}`}
-                onClick={() => setErrorsOnly((prev) => !prev)}
+                aria-pressed={sourceNotEmptyTargetEmptyOnly}
+                className={`workflow-grid__chip ${sourceNotEmptyTargetEmptyOnly ? "workflow-grid__chip--active" : ""}`}
+                onClick={() => setSourceNotEmptyTargetEmptyOnly((prev) => !prev)}
+                disabled={!validBulkCopyFrom || !validBulkCopyTo || validBulkCopyFrom === validBulkCopyTo}
               >
-                Errors
+                Source filled + Target empty
               </button>
               <button type="button" className="workflow-grid__chip workflow-grid__chip--reset" onClick={resetMergedToolbarState}>
                 Reset
+              </button>
+            </div>
+          </div>
+          <div className="workflow-grid__toolbar-row workflow-grid__toolbar-row--bulk-copy">
+            <div className="workflow-grid__bulk-copy">
+              <div className="workflow-grid__bulk-copy-main">
+                <span>Copy Column</span>
+                <select
+                  value={validBulkCopyFrom}
+                  onChange={(event) => setBulkCopyFrom(event.target.value)}
+                  aria-label="Bulk copy source column"
+                >
+                  {bulkCopyOptions.map((option) => (
+                    <option key={`copy-from-${option.field}`} value={option.field}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <small>to</small>
+                <select
+                  value={validBulkCopyTo}
+                  onChange={(event) => setBulkCopyTo(event.target.value)}
+                  aria-label="Bulk copy target column"
+                >
+                  {bulkCopyOptions.map((option) => (
+                    <option key={`copy-to-${option.field}`} value={option.field}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="workflow-grid__toolbar-action workflow-grid__toolbar-action--compact"
+                  onClick={applyBulkCopyColumns}
+                  disabled={
+                    rows.length === 0 ||
+                    !validBulkCopyFrom ||
+                    !validBulkCopyTo ||
+                    validBulkCopyFrom === validBulkCopyTo
+                  }
+                >
+                  Copy All Rows
+                </button>
+              </div>
+              <div className="workflow-grid__bulk-copy-toggles">
+                <label className="workflow-grid__inline-check">
+                  <input
+                    type="checkbox"
+                    checked={bulkCopySafeMode}
+                    onChange={(event) => setBulkCopySafeMode(event.target.checked)}
+                  />
+                  <span>Safe copy (target empty only)</span>
+                </label>
+                <label className="workflow-grid__inline-check">
+                  <input
+                    type="checkbox"
+                    checked={bulkCopyFilledSourceOnly}
+                    onChange={(event) => setBulkCopyFilledSourceOnly(event.target.checked)}
+                  />
+                  <span>Copy filled source only</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div className="workflow-grid__toolbar-row workflow-grid__toolbar-row--find-replace">
+            <div className="workflow-grid__find-replace">
+              <span>Find &amp; Replace</span>
+              <input
+                type="text"
+                value={findText}
+                onChange={(event) => setFindText(event.target.value)}
+                placeholder="Find text..."
+                aria-label="Find text"
+              />
+              <small>→</small>
+              <input
+                type="text"
+                value={replaceText}
+                onChange={(event) => setReplaceText(event.target.value)}
+                placeholder="Replace with..."
+                aria-label="Replace text"
+              />
+              <select
+                value={findReplaceScope}
+                onChange={(event) => setFindReplaceScope(event.target.value as "target" | "all")}
+                aria-label="Find replace scope"
+              >
+                <option value="target">Target column</option>
+                <option value="all">All locale columns</option>
+              </select>
+              <button
+                type="button"
+                className="workflow-grid__toolbar-action workflow-grid__toolbar-action--compact"
+                onClick={applyFindReplace}
+                disabled={rows.length === 0 || findText.length === 0}
+              >
+                Apply Replace
               </button>
             </div>
           </div>
@@ -491,6 +847,16 @@ const LocalizationGrid = ({
                 disabled={!onAddRow}
               >
                 Add Row
+              </button>
+              <button
+                type="button"
+                className="workflow-grid__toolbar-action"
+                onClick={() => {
+                  void copyFocusedCellValue();
+                }}
+                disabled={!gridApi}
+              >
+                Copy Cell
               </button>
               <button
                 type="button"
@@ -512,6 +878,7 @@ const LocalizationGrid = ({
             <div className="workflow-grid__toolbar-status">
               {gridHeightError ? <small className="workflow-grid__toolbar-error">{gridHeightError}</small> : null}
               {columnWidthError ? <small className="workflow-grid__toolbar-error">{columnWidthError}</small> : null}
+              {copyFeedback ? <small className="workflow-grid__toolbar-copy">{copyFeedback}</small> : null}
               <button
                 type="button"
                 className="workflow-grid__toolbar-action workflow-grid__toolbar-action--compact"
@@ -536,9 +903,10 @@ const LocalizationGrid = ({
             <li><code>?</code> Toggle this help</li>
             <li><code>Alt + 1</code> Not Empty</li>
             <li><code>Alt + 2</code> Missing Translations</li>
-            <li><code>Alt + 3</code> Needs QA</li>
-            <li><code>Alt + 4</code> Errors</li>
-            <li><code>Alt + 5</code> Review Changes Only</li>
+            <li><code>Alt + 3</code> Review Changes Only</li>
+            <li><code>Target == Source</code> Uses selected copy source/target columns</li>
+            <li><code>Source filled + Target empty</code> Uses selected copy source/target columns</li>
+            <li><code>Alt + C</code> Copy focused cell</li>
             <li><code>Esc</code> Close this help</li>
           </ul>
         </aside>
