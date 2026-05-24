@@ -2,7 +2,7 @@ import type { LocaleColumn, LocaleVariant, TlkGridRow, ValidationIssue, Validati
 import { localeCodeToFieldToken, normalizeLocaleCode } from "./types";
 
 export interface XlsxRuntime {
-  read(data: ArrayBuffer, options: { type: "array" }): {
+  read(data: ArrayBuffer, options: { type: "array"; raw?: boolean; cellDates?: boolean }): {
     SheetNames: string[];
     Sheets: Record<string, unknown>;
   };
@@ -65,12 +65,18 @@ export function buildTlkRowsFromXlsxRows(sheetRows: readonly XlsxRow[]): TlkGrid
   normalized.sort((a, b) => Number(a.StrRef) - Number(b.StrRef));
 
   return normalized.map(row => {
+    const localeKeyOrder = Object.keys(row).filter((key) => {
+      if (["StrRef", "Source_EN", "Source", "Context", "Status"].includes(key)) return false;
+      return true;
+    });
+    const firstLocaleKey = localeKeyOrder[0];
+    const fallbackSource = firstLocaleKey ? sanitizeSheetCell(row[firstLocaleKey]) : "";
     const status = sanitizeSheetCell(row.Status);
     const result: TlkGridRow = {
       id: Number(row.StrRef),
       strRef: Number(row.StrRef),
-      sourceEn: sanitizeSheetCell(row.Source_EN || row.Source || ""),
-      context: sanitizeSheetCell(row.Context || ""),
+      sourceEn: sanitizeSheetCell(row.Source_EN || row.Source || fallbackSource),
+      context: "",
       status: status || "Draft"
     };
 
@@ -101,8 +107,6 @@ export function buildXlsxRowsForExport(rows: readonly TlkGridRow[], localeColumn
   return rows.map(row => {
     const exported: XlsxRow = {
       StrRef: row.strRef,
-      Source_EN: row.sourceEn,
-      Status: row.status || "Draft"
     };
 
     localeColumns.forEach(col => {
@@ -119,7 +123,7 @@ export function buildXlsxRowsForExport(rows: readonly TlkGridRow[], localeColumn
 }
 
 export function buildXlsxHeaderForExport(localeColumns: readonly LocaleColumn[]): string[] {
-  const headers = ["StrRef", "Source_EN", "Status"];
+  const headers = ["StrRef"];
   for (let i = 0; i < localeColumns.length; i += 1) {
     const col = localeColumns[i];
     const columnName = col.variant === "dialogf"
@@ -143,8 +147,6 @@ export function buildXlsxAoaForExport(
     const row = rows[rowIndex];
     const line: Array<string | number> = [
       row.strRef,
-      sanitizeSheetCell(row.sourceEn),
-      sanitizeSheetCell(row.status || "Draft"),
     ];
 
     for (let colIndex = 0; colIndex < localeColumns.length; colIndex += 1) {
@@ -155,6 +157,149 @@ export function buildXlsxAoaForExport(
   }
 
   return result;
+}
+
+export interface CsvExportChangeInput {
+  baselineRows: readonly TlkGridRow[];
+  currentRows: readonly TlkGridRow[];
+  localeColumns: readonly LocaleColumn[];
+}
+
+export interface CsvExportChangeSummary {
+  changedRows: number;
+  changedCells: number;
+  addedRows: number;
+  removedRows: number;
+  sourceChangedRows: number;
+  changedRowStrRefs: number[];
+  touchedLocales: string[];
+}
+
+export function computeCsvExportChangeSummary(input: CsvExportChangeInput): CsvExportChangeSummary {
+  const baselineByStrRef = new Map<number, TlkGridRow>();
+  const currentByStrRef = new Map<number, TlkGridRow>();
+  const touchedLocales = new Set<string>();
+  const changedRowStrRefs: number[] = [];
+
+  for (let i = 0; i < input.baselineRows.length; i += 1) {
+    const row = input.baselineRows[i];
+    baselineByStrRef.set(Number(row.strRef), row);
+  }
+
+  for (let i = 0; i < input.currentRows.length; i += 1) {
+    const row = input.currentRows[i];
+    currentByStrRef.set(Number(row.strRef), row);
+  }
+
+  let changedRows = 0;
+  let changedCells = 0;
+  let addedRows = 0;
+  let removedRows = 0;
+  let sourceChangedRows = 0;
+
+  const allStrRefs = new Set<number>([
+    ...baselineByStrRef.keys(),
+    ...currentByStrRef.keys(),
+  ]);
+
+  allStrRefs.forEach((strRef) => {
+    const baselineRow = baselineByStrRef.get(strRef);
+    const currentRow = currentByStrRef.get(strRef);
+
+    if (!baselineRow && currentRow) {
+      addedRows += 1;
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+      const sourceValue = sanitizeSheetCell(currentRow.sourceEn);
+      if (sourceValue.length > 0) {
+        sourceChangedRows += 1;
+        changedCells += 1;
+      }
+      for (let i = 0; i < input.localeColumns.length; i += 1) {
+        const col = input.localeColumns[i];
+        const value = sanitizeSheetCell(currentRow[col.field]);
+        if (value.length > 0) {
+          touchedLocales.add(col.title);
+          changedCells += 1;
+        }
+      }
+      return;
+    }
+
+    if (baselineRow && !currentRow) {
+      removedRows += 1;
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+      const sourceValue = sanitizeSheetCell(baselineRow.sourceEn);
+      if (sourceValue.length > 0) {
+        sourceChangedRows += 1;
+        changedCells += 1;
+      }
+      for (let i = 0; i < input.localeColumns.length; i += 1) {
+        const col = input.localeColumns[i];
+        const value = sanitizeSheetCell(baselineRow[col.field]);
+        if (value.length > 0) {
+          touchedLocales.add(col.title);
+          changedCells += 1;
+        }
+      }
+      return;
+    }
+
+    if (!baselineRow || !currentRow) {
+      return;
+    }
+
+    let rowChanged = false;
+    const baselineSource = sanitizeSheetCell(baselineRow.sourceEn);
+    const currentSource = sanitizeSheetCell(currentRow.sourceEn);
+    if (baselineSource !== currentSource) {
+      rowChanged = true;
+      sourceChangedRows += 1;
+      changedCells += 1;
+    }
+
+    for (let i = 0; i < input.localeColumns.length; i += 1) {
+      const col = input.localeColumns[i];
+      const currentHasField = Object.prototype.hasOwnProperty.call(currentRow, col.field);
+      const baselineHasField = Object.prototype.hasOwnProperty.call(baselineRow, col.field);
+      if (currentHasField !== baselineHasField) {
+        rowChanged = true;
+        touchedLocales.add(col.title);
+        changedCells += 1;
+        continue;
+      }
+
+      const baselineValue = sanitizeSheetCell(baselineRow[col.field]);
+      const currentValue = sanitizeSheetCell(currentRow[col.field]);
+      if (baselineValue !== currentValue) {
+        rowChanged = true;
+        touchedLocales.add(col.title);
+        changedCells += 1;
+      }
+    }
+
+    if (rowChanged) {
+      changedRows += 1;
+      changedRowStrRefs.push(strRef);
+    }
+  });
+
+  changedRowStrRefs.sort((a, b) => a - b);
+
+  return {
+    changedRows,
+    changedCells,
+    addedRows,
+    removedRows,
+    sourceChangedRows,
+    changedRowStrRefs,
+    touchedLocales: Array.from(touchedLocales).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+export function hasCsvExportChanges(input: CsvExportChangeInput): boolean {
+  return computeCsvExportChangeSummary(input).changedRows > 0;
 }
 
 export function makeXlsxFileName(): string {
@@ -195,7 +340,11 @@ export async function parseWorkbookFile(file: XlsxFile, xlsx: XlsxRuntime): Prom
   }
 
   const buffer = await file.arrayBuffer();
-  const workbook = xlsx.read(buffer, { type: "array" });
+  const workbook = xlsx.read(buffer, {
+    type: "array",
+    raw: true,
+    cellDates: false,
+  });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) {
     throw new Error("XLSX workbook has no sheets.");
@@ -203,7 +352,7 @@ export async function parseWorkbookFile(file: XlsxFile, xlsx: XlsxRuntime): Prom
   const sheet = workbook.Sheets[firstSheetName];
   const jsonRows = xlsx.utils.sheet_to_json(sheet, {
     defval: "",
-    raw: false,
+    raw: true,
     blankrows: false
   });
   if (!Array.isArray(jsonRows) || jsonRows.length === 0) {
@@ -227,13 +376,9 @@ export function validateXlsxSchema(rows: readonly XlsxRow[], sourceLabel = "XLSX
   }
 
   const firstRow = rows[0] as Record<string, unknown>;
-  const hasSource = firstRow.Source_EN !== undefined || firstRow.Source !== undefined;
   const hasStrRef = firstRow.StrRef !== undefined;
   if (!hasStrRef) {
     issues.push({ severity: "error", field: "StrRef", message: `${sourceLabel}: missing required column StrRef.` });
-  }
-  if (!hasSource) {
-    issues.push({ severity: "error", message: `${sourceLabel}: missing required column Source_EN (or Source).` });
   }
   if (!Object.keys(firstRow).some(key => /^loc_/i.test(key))) {
     issues.push({ severity: "warning", message: `${sourceLabel}: no locale columns detected; export/import may be translation-only.` });

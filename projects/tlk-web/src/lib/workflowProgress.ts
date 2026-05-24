@@ -7,6 +7,7 @@ export interface WorkflowProgressFlags {
   validated: boolean;
   exported: boolean;
   imported: boolean;
+  hasPublishableChanges: boolean;
 }
 
 export interface StepUiState {
@@ -22,10 +23,14 @@ interface StepGate {
 
 function buildStepGates(scope: WorkflowScope, flags: WorkflowProgressFlags): StepGate[] {
   if (scope === "exchange") {
+    const publishBlockedReason = !flags.sourceLoaded
+      ? "Load source first."
+      : "No data changes detected. Edit data before publishing.";
+
     return [
       { blocked: false },
-      { blocked: !flags.sourceLoaded, reason: "Load source and run Parse & Validate first." },
-      { blocked: !flags.validated, reason: "Validate Edit step first." },
+      { blocked: !flags.sourceLoaded, reason: "Load source first." },
+      { blocked: !flags.sourceLoaded || !flags.hasPublishableChanges, reason: publishBlockedReason },
     ];
   }
 
